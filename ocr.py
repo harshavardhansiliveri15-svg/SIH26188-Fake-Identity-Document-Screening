@@ -1,3 +1,4 @@
+```python
 import re
 import cv2
 import numpy as np
@@ -225,17 +226,14 @@ def extract_date(text, lines=None):
 
     dob_patterns = [
 
-        # DOB: 18/05/1990
         r"(?:DATE\s*OF\s*BIRTH|DOB|D\.O\.B\.?)"
         r"\s*[:\-]?\s*"
         r"(\d{2}[/-]\d{2}[/-]\d{4})",
 
-        # DATE OF BIRTH 18-05-1990
         r"(?:DATE\s*OF\s*BIRTH|DOB|D\.O\.B\.?)"
         r"\s+"
         r"(\d{2}[/-]\d{2}[/-]\d{4})",
 
-        # DOB: 1990/05/18
         r"(?:DATE\s*OF\s*BIRTH|DOB|D\.O\.B\.?)"
         r"\s*[:\-]?\s*"
         r"(\d{4}[/-]\d{2}[/-]\d{2})"
@@ -257,7 +255,6 @@ def extract_date(text, lines=None):
             if is_valid_date(candidate):
                 return candidate
 
-
     # -----------------------------------------------------
     # Second: check individual OCR lines
     # -----------------------------------------------------
@@ -274,7 +271,6 @@ def extract_date(text, lines=None):
                 or "D.O.B" in upper_line
             ):
 
-                # Date on same line
                 match = re.search(
                     r"\d{2}[/-]\d{2}[/-]\d{4}",
                     line
@@ -283,7 +279,6 @@ def extract_date(text, lines=None):
                 if match:
                     return match.group(0)
 
-                # Date on next OCR line
                 if i + 1 < len(lines):
 
                     match = re.search(
@@ -294,11 +289,8 @@ def extract_date(text, lines=None):
                     if match:
                         return match.group(0)
 
-
     # -----------------------------------------------------
     # Final fallback
-    #
-    # Only used if no DOB label was detected.
     # -----------------------------------------------------
 
     date_patterns = [
@@ -324,23 +316,23 @@ def extract_date(text, lines=None):
 
 
 # =========================================================
-# NAME
+# NAME EXTRACTION
 # =========================================================
 
-```python
-```python
 def extract_name(lines, document_type=""):
 
-    # =====================================================
+    # -----------------------------------------------------
     # 1. EXPLICIT NAME LABEL
-    # =====================================================
+    # -----------------------------------------------------
 
     for i, line in enumerate(lines):
 
         text = normalize_text(line)
         upper = text.upper()
 
+        # Example:
         # NAME: KHAN SUHAIL AHMED
+
         match = re.match(
             r"^(?:NAME|FULL\s*NAME|GIVEN\s*NAME)"
             r"\s*[:\-]\s*(.+)$",
@@ -350,7 +342,9 @@ def extract_name(lines, document_type=""):
 
         if match:
 
-            candidate = normalize_text(match.group(1))
+            candidate = normalize_text(
+                match.group(1)
+            )
 
             candidate = re.sub(
                 r"[^A-Za-z .]",
@@ -358,16 +352,19 @@ def extract_name(lines, document_type=""):
                 candidate
             )
 
-            candidate = normalize_text(candidate)
+            candidate = normalize_text(
+                candidate
+            )
 
             words = candidate.split()
 
             if len(words) >= 2:
                 return candidate.upper()
 
-
+        # Example:
         # NAME
         # KHAN SUHAIL AHMED
+
         if re.fullmatch(
             r"(?:NAME|FULL\s*NAME|GIVEN\s*NAME)",
             upper
@@ -385,17 +382,18 @@ def extract_name(lines, document_type=""):
                     candidate
                 )
 
-                candidate = normalize_text(candidate)
+                candidate = normalize_text(
+                    candidate
+                )
 
                 words = candidate.split()
 
                 if len(words) >= 2:
                     return candidate.upper()
 
-
-    # =====================================================
-    # 2. PAN CARD NAME DETECTION
-    # =====================================================
+    # -----------------------------------------------------
+    # 2. PAN CARD POSITION-BASED EXTRACTION
+    # -----------------------------------------------------
 
     dob_index = -1
 
@@ -408,9 +406,9 @@ def extract_name(lines, document_type=""):
             or "DOB" in upper
             or "D.O.B" in upper
         ):
+
             dob_index = i
             break
-
 
     if dob_index > 0:
 
@@ -445,9 +443,15 @@ def extract_name(lines, document_type=""):
             dob_index - 6
         )
 
-        for i in range(start, dob_index):
+        for i in range(
+            start,
+            dob_index
+        ):
 
-            candidate = normalize_text(lines[i])
+            candidate = normalize_text(
+                lines[i]
+            )
+
             upper = candidate.upper()
 
             if not candidate:
@@ -474,23 +478,22 @@ def extract_name(lines, document_type=""):
             ):
                 continue
 
-            # Keep alphabetic text only
+            # Keep alphabetic characters
             candidate = re.sub(
                 r"[^A-Za-z .]",
                 " ",
                 candidate
             )
 
-            candidate = normalize_text(candidate)
+            candidate = normalize_text(
+                candidate
+            )
 
             words = candidate.split()
 
-            # -------------------------------------------------
             # IMPORTANT:
-            # A person's PAN name normally contains at least
-            # two words. This prevents OCR garbage such as HOT.
-            # -------------------------------------------------
-
+            # Require at least two words.
+            # This prevents OCR garbage such as HOT.
             if len(words) < 2:
                 continue
 
@@ -500,25 +503,11 @@ def extract_name(lines, document_type=""):
             if len(candidate) > 40:
                 continue
 
-            # Require every word to contain letters
-            if not all(
-                re.search(r"[A-Za-z]", word)
-                for word in words
-            ):
-                continue
-
             candidates.append(
                 (i, candidate.upper())
             )
 
-
-        # -------------------------------------------------
-        # Prefer a 3-word candidate.
-        #
-        # KHAN SUHAIL AHMED -> 3 words
-        # HOT                -> 1 word -> rejected
-        # -------------------------------------------------
-
+        # Prefer a 3-word candidate
         three_word = [
             candidate
             for _, candidate in candidates
@@ -532,228 +521,11 @@ def extract_name(lines, document_type=""):
         if candidates:
             return candidates[0][1]
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # 3. NO RELIABLE NAME FOUND
-    # =====================================================
+    # -----------------------------------------------------
 
     return ""
-```
-
-
-
-    # =====================================================
-    # 2. PAN CARD POSITION-BASED EXTRACTION
-    # =====================================================
-
-    # Find DOB position
-    dob_index = -1
-
-    for i, line in enumerate(lines):
-
-        upper = line.upper()
-
-        if (
-            "DATE OF BIRTH" in upper
-            or "DOB" in upper
-            or "D.O.B" in upper
-        ):
-            dob_index = i
-            break
-
-
-    # Find PAN number position
-    pan_index = -1
-
-    for i, line in enumerate(lines):
-
-        if re.search(
-            r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
-            line.upper()
-        ):
-            pan_index = i
-            break
-
-
-    # =====================================================
-    # 3. SEARCH BEFORE DOB
-    #
-    # Typical PAN OCR order is approximately:
-    #
-    # GOVERNMENT OF INDIA
-    # NAME
-    # FATHER NAME
-    # DATE OF BIRTH
-    # PAN NUMBER
-    #
-    # Therefore look immediately before DOB.
-    # =====================================================
-
-    if dob_index > 0:
-
-        possible = []
-
-        start = max(
-            0,
-            dob_index - 5
-        )
-
-        for i in range(
-            start,
-            dob_index
-        ):
-
-            candidate = normalize_text(
-                lines[i]
-            )
-
-            upper = candidate.upper()
-
-            if not candidate:
-                continue
-
-            # Skip obvious document text
-            blocked = [
-                "INCOME TAX",
-                "DEPARTMENT",
-                "GOVERNMENT",
-                "INDIA",
-                "PERMANENT",
-                "ACCOUNT",
-                "NUMBER",
-                "PAN",
-                "FATHER",
-                "FATHER'S",
-                "FATHER NAME",
-                "MOTHER",
-                "ADDRESS",
-                "SIGNATURE"
-            ]
-
-            if any(
-                word in upper
-                for word in blocked
-            ):
-                continue
-
-            # Skip PAN
-            if re.search(
-                r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
-                upper
-            ):
-                continue
-
-            # Skip dates
-            if re.search(
-                r"\d{2}[/-]\d{2}[/-]\d{4}",
-                candidate
-            ):
-                continue
-
-            # Name must contain letters
-            if not re.search(
-                r"[A-Za-z]",
-                candidate
-            ):
-                continue
-
-            # Remove OCR garbage
-            candidate = re.sub(
-                r"[^A-Za-z .]",
-                " ",
-                candidate
-            )
-
-            candidate = normalize_text(candidate)
-
-            if len(candidate) < 3:
-                continue
-
-            if len(candidate) > 40:
-                continue
-
-            possible.append(
-                (i, candidate)
-            )
-
-
-        # Prefer the candidate that is closest to DOB,
-        # but avoid a likely father's-name line.
-        if possible:
-
-            # If there are at least two candidates,
-            # the earlier one is usually the person's name
-            # and the later one is often father's name.
-            if len(possible) >= 2:
-
-                return possible[-2][1]
-
-            return possible[-1][1]
-
-
-    # =====================================================
-    # 4. FINAL SAFE FALLBACK
-    # =====================================================
-
-    blocked = [
-        "INCOME",
-        "TAX",
-        "DEPARTMENT",
-        "GOVERNMENT",
-        "INDIA",
-        "PERMANENT",
-        "ACCOUNT",
-        "NUMBER",
-        "PAN",
-        "DATE",
-        "BIRTH",
-        "DOB",
-        "ADDRESS",
-        "SIGNATURE",
-        "FATHER",
-        "MOTHER",
-        "MALE",
-        "FEMALE",
-        "HOT"
-    ]
-
-    for line in lines:
-
-        candidate = normalize_text(line)
-        upper = candidate.upper()
-
-        if any(
-            word in upper
-            for word in blocked
-        ):
-            continue
-
-        if re.search(
-            r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
-            upper
-        ):
-            continue
-
-        if re.search(
-            r"\d{2}[/-]\d{2}[/-]\d{4}",
-            candidate
-        ):
-            continue
-
-        candidate = re.sub(
-            r"[^A-Za-z .]",
-            " ",
-            candidate
-        )
-
-        candidate = normalize_text(candidate)
-
-        if len(candidate) >= 3:
-            return candidate
-
-    return ""
-```
-
 
 
 # =========================================================
@@ -797,7 +569,9 @@ def extract_address(lines):
                 )
 
                 if value:
-                    address_lines.append(value)
+                    address_lines.append(
+                        value
+                    )
 
             continue
 
@@ -974,7 +748,8 @@ def extract_text(image):
         )
 
         name = extract_name(
-            lines
+            lines,
+            document_type
         )
 
         address = extract_address(
@@ -1007,3 +782,4 @@ def extract_text(image):
             "raw_text": "",
             "error": f"OCR Error: {str(e)}"
         }
+```
