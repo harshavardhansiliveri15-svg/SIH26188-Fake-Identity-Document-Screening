@@ -1,8 +1,9 @@
 streamlit
 pillow
 numpy
-opencv-python-headless
+opencv-python-headless==4.10.0.84
 rapidocr
 onnxruntime
-deepface
-tf-keras
+deepface==0.0.100
+tensorflow==2.21.0
+tf-keras==2.21.0
