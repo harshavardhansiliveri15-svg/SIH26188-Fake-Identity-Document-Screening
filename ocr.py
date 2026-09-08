@@ -239,6 +239,7 @@ def looks_like_person_name(value):
         "birth",
         "father",
         "father name",
+        "father's name",
         "name",
         "pan",
         "government",
@@ -252,6 +253,19 @@ def looks_like_person_name(value):
     if lowered in blocked:
         return False
 
+    blocked_combinations = [
+        "govt of india",
+        "govt. of india",
+        "government of india",
+        "income tax department",
+        "permanent account number",
+        "permanent account"
+    ]
+
+    for phrase in blocked_combinations:
+        if phrase in lowered:
+            return False
+
     for word in words:
 
         if not re.fullmatch(
@@ -260,7 +274,6 @@ def looks_like_person_name(value):
         ):
             return False
 
-        # Reject extremely short OCR fragments
         if len(word) < 2:
             return False
 
@@ -338,74 +351,60 @@ def extract_date_of_birth(text):
 
 
 def extract_name_from_lines(lines):
+    """
+    Conservative name extraction.
+
+    The system only accepts a name when it is associated
+    with an explicit name-related label.
+
+    It does NOT guess a name from arbitrary OCR text.
+    """
+
     name_labels = [
         "name",
         "full name",
         "full-name",
-        "surname",
         "given name",
         "given names",
-        "first name"
+        "first name",
+        "surname"
     ]
 
-    father_labels = [
+    blocked_phrases = [
+        "govt of india",
+        "govt. of india",
+        "government of india",
+        "income tax",
+        "income-tax",
+        "income tax department",
+        "permanent account number",
+        "permanent account",
+        "department",
+        "signature",
+        "date of birth",
+        "dob",
         "father",
         "father name",
         "father's name",
-        "father s name"
+        "pan card",
+        "india"
     ]
 
+    def is_blocked(value):
+        value_lower = value.lower().strip()
+
+        for phrase in blocked_phrases:
+            if phrase in value_lower:
+                return True
+
+        return False
+
     # --------------------------------------------------
-    # STEP 1:
-    # Look specifically for a NAME label.
+    # STEP 1
+    # Look for an explicit NAME label.
     # --------------------------------------------------
 
     for index, line in enumerate(lines):
-
-        clean_line = clean_ocr_value(line)
-
-        lower_line = clean_line.lower()
-
-        for label in name_labels:
-
-            if lower_line.startswith(label):
-
-                remainder = re.sub(
-                    rf"^{re.escape(label)}"
-                    r"\s*[:\-]?\s*",
-                    "",
-                    clean_line,
-                    flags=re.IGNORECASE
-                )
-
-                if looks_like_person_name(
-                    remainder
-                ):
-                    return remainder
-
-                # Sometimes OCR places the name
-                # on the line immediately below "Name"
-
-                if index + 1 < len(lines):
-
-                    next_line = clean_ocr_value(
-                        lines[index + 1]
-                    )
-
-                    if looks_like_person_name(
-                        next_line
-                    ):
-                        return next_line
-
-    # --------------------------------------------------
-    # STEP 2:
-    # Conservative fallback.
-    #
-    # Only accept a name containing at least
-    # two proper-looking words.
-    # --------------------------------------------------
-
-    for line in lines:
 
         clean_line = clean_ocr_value(line)
 
@@ -414,37 +413,84 @@ def extract_name_from_lines(lines):
 
         lower_line = clean_line.lower()
 
-        # Ignore father-related lines
-        if any(
-            label in lower_line
-            for label in father_labels
-        ):
+        if is_blocked(clean_line):
             continue
 
-        if not looks_like_person_name(
-            clean_line
-        ):
+        for label in name_labels:
+
+            pattern = (
+                rf"^{re.escape(label)}"
+                r"\s*[:\-]?\s*(.*)$"
+            )
+
+            match = re.match(
+                pattern,
+                clean_line,
+                re.IGNORECASE
+            )
+
+            if not match:
+                continue
+
+            candidate = clean_ocr_value(
+                match.group(1)
+            )
+
+            # Name is on the same line.
+            if (
+                candidate
+                and not is_blocked(candidate)
+                and looks_like_person_name(candidate)
+            ):
+                return candidate
+
+            # Name may be on the next OCR line.
+            if index + 1 < len(lines):
+
+                next_line = clean_ocr_value(
+                    lines[index + 1]
+                )
+
+                if (
+                    next_line
+                    and not is_blocked(next_line)
+                    and looks_like_person_name(next_line)
+                ):
+                    return next_line
+
+    # --------------------------------------------------
+    # STEP 2
+    # Handle OCR where "NAME" is a separate line.
+    # --------------------------------------------------
+
+    for index, line in enumerate(lines):
+
+        clean_line = clean_ocr_value(line)
+
+        if not clean_line:
             continue
 
-        # Reject one-word OCR fragments
-        if len(clean_line.split()) < 2:
-            continue
+        if clean_line.lower() in name_labels:
 
-        upper_line = clean_line.upper()
+            if index + 1 < len(lines):
 
-        blocked_lines = [
-            "PERMANENT ACCOUNT NUMBER",
-            "INCOME TAX DEPARTMENT",
-            "GOVT OF INDIA",
-            "GOVERNMENT OF INDIA",
-            "INCOME TAX",
-            "PERMANENT ACCOUNT"
-        ]
+                candidate = clean_ocr_value(
+                    lines[index + 1]
+                )
 
-        if upper_line in blocked_lines:
-            continue
+                if (
+                    not is_blocked(candidate)
+                    and looks_like_person_name(candidate)
+                ):
+                    return candidate
 
-        return clean_line
+    # --------------------------------------------------
+    # STEP 3
+    # DO NOT GUESS.
+    #
+    # If no reliable name was found, return
+    # "Not detected".
+    # --------------------------------------------------
 
     return "Not detected"
 
