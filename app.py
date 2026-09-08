@@ -430,10 +430,12 @@ if analyze:
         with st.spinner("✓ Checking document validation..."):
 
             try:
-                 validation_result = validate_document(
-                 ocr_result,
-                 document_image
-                  )
+
+                validation_result = validate_document(
+                    ocr_result,
+                    document_image
+                )
+
             except Exception as error:
 
                 st.error(f"❌ Validation module error: {error}")
@@ -578,6 +580,11 @@ if analyze:
             "UNKNOWN"
         )
 
+        tamper_score = tamper_result.get(
+            "score",
+            0
+        )
+
         face_status = face_result.get(
             "status",
             "UNKNOWN"
@@ -647,7 +654,7 @@ if analyze:
                 <div class="status-card">
                     <div class="status-title">🔎 Tampering</div>
                     <div class="status-value">{tamper_status}</div>
-                    <div class="status-detail">Manipulation analysis</div>
+                    <div class="status-detail">Score: {tamper_score}/100</div>
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -731,37 +738,36 @@ if analyze:
             st.markdown("</div>", unsafe_allow_html=True)
 
 
-       with result_col2:
+        with result_col2:
 
-           st.markdown(
-             '<div class="result-card">',
-        unsafe_allow_html=True
-    )
+            st.markdown(
+                '<div class="result-card">',
+                unsafe_allow_html=True
+            )
 
-    st.subheader("🔎 Tampering Detection")
+            st.subheader("🔎 Tampering Detection")
 
-    # Get tampering score
-    tamper_score = tamper_result.get("score", 0)
-    
-    if "LOW" in str(tamper_status).upper():
-        st.success(f"Tampering Status: {tamper_status}")
-    else:
-        st.warning(f"Tampering Status: {tamper_status}")
+            if "LOW" in str(tamper_status).upper():
+                st.success(f"Tampering Status: {tamper_status}")
+            else:
+                st.warning(f"Tampering Status: {tamper_status}")
 
-    # Display score
-    st.metric("Tampering Score", f"{tamper_score}/100")
+            st.metric("Tampering Score", f"{tamper_score}/100")
 
-    # Display message
-    st.write(tamper_result.get("message", "No tampering message."))
+            st.write(
+                tamper_result.get(
+                    "message",
+                    "No tampering message."
+                )
+            )
 
-    # Display detailed scores
-    detailed_scores = tamper_result.get("detailed_scores", {})
-    if detailed_scores:
-        st.write("**Detailed Analysis:**")
-        for method, score in detailed_scores.items():
-            st.write(f"  • {method}: {score}")
+            detailed_scores = tamper_result.get("detailed_scores", {})
+            if detailed_scores:
+                st.write("**Detailed Analysis:**")
+                for method, score in detailed_scores.items():
+                    st.write(f"  • {method}: {score}")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown("</div>", unsafe_allow_html=True)
 
 
         # ----------------------------------------------------
