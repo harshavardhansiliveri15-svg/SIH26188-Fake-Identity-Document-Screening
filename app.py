@@ -731,33 +731,37 @@ if analyze:
             st.markdown("</div>", unsafe_allow_html=True)
 
 
-        with result_col2:
+       with result_col2:
 
-            st.markdown(
-                '<div class="result-card">',
-                unsafe_allow_html=True
-            )
+    st.markdown(
+        '<div class="result-card">',
+        unsafe_allow_html=True
+    )
 
-            st.subheader("🔎 Tampering Detection")
+    st.subheader("🔎 Tampering Detection")
 
-            if "LOW" in str(tamper_status).upper():
+    # Get tampering score
+    tamper_score = tamper_result.get("score", 0)
+    
+    if "LOW" in str(tamper_status).upper():
+        st.success(f"Tampering Status: {tamper_status}")
+    else:
+        st.warning(f"Tampering Status: {tamper_status}")
 
-                st.success(f"Tampering Status: {tamper_status}")
+    # Display score
+    st.metric("Tampering Score", f"{tamper_score}/100")
 
-            else:
+    # Display message
+    st.write(tamper_result.get("message", "No tampering message."))
 
-                st.warning(
-                    f"Tampering Status: {tamper_status}"
-                )
+    # Display detailed scores
+    detailed_scores = tamper_result.get("detailed_scores", {})
+    if detailed_scores:
+        st.write("**Detailed Analysis:**")
+        for method, score in detailed_scores.items():
+            st.write(f"  • {method}: {score}")
 
-            st.write(
-                tamper_result.get(
-                    "message",
-                    "No tampering message."
-                )
-            )
-
-            st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
         # ----------------------------------------------------
