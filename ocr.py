@@ -5,9 +5,9 @@ from PIL import Image
 from rapidocr import RapidOCR
 
 
-# ---------------------------------------------------------
+# =========================================================
 # OCR ENGINE
-# ---------------------------------------------------------
+# =========================================================
 
 _ocr_engine = None
 
@@ -21,14 +21,11 @@ def get_ocr_engine():
     return _ocr_engine
 
 
-# ---------------------------------------------------------
+# =========================================================
 # IMAGE CONVERSION
-# ---------------------------------------------------------
+# =========================================================
 
 def convert_to_bgr(image):
-    """
-    Convert uploaded image/PIL image/numpy image to BGR format.
-    """
 
     if isinstance(image, Image.Image):
         image = np.array(image)
@@ -36,31 +33,35 @@ def convert_to_bgr(image):
     if not isinstance(image, np.ndarray):
         raise ValueError("Unsupported image format")
 
-    if len(image.shape) == 2:
+    # Grayscale
+    if image.ndim == 2:
         return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
 
-    if image.shape[2] == 4:
+    # RGBA
+    if image.ndim == 3 and image.shape[2] == 4:
         return cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
 
-    return cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    # RGB
+    if image.ndim == 3 and image.shape[2] == 3:
+        return cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+
+    raise ValueError(f"Unsupported image shape: {image.shape}")
 
 
-# ---------------------------------------------------------
+# =========================================================
 # IMAGE PREPROCESSING
-# ---------------------------------------------------------
+# =========================================================
 
 def preprocess_image(image):
-    """
-    Improve image quality before OCR.
-    """
 
     image = convert_to_bgr(image)
 
-    # Enlarge small document images
     height, width = image.shape[:2]
 
-    if width < 1800:
-        scale = 1800 / width
+    # Don't unnecessarily enlarge already-large images
+    if width < 1600:
+        scale = 1600 / width
+
         image = cv2.resize(
             image,
             None,
@@ -69,137 +70,132 @@ def preprocess_image(image):
             interpolation=cv2.INTER_CUBIC
         )
 
-    # Convert to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # Mild sharpening
+    kernel = np.array([
+        [0, -1, 0],
+        [-1, 5, -1],
+        [0, -1, 0]
+    ])
 
-    # Improve contrast
-    clahe = cv2.createCLAHE(
-        clipLimit=2.0,
-        tileGridSize=(8, 8)
-    )
+    sharpened = cv2.filter2D(image, -1, kernel)
 
-    enhanced = clahe.apply(gray)
-
-    # Convert back to BGR because OCR engines generally
-    # handle standard image arrays better
-    processed = cv2.cvtColor(
-        enhanced,
-        cv2.COLOR_GRAY2BGR
-    )
-
-    return processed
+    return sharpened
 
 
-# ---------------------------------------------------------
+# =========================================================
 # TEXT CLEANING
-# ---------------------------------------------------------
+# =========================================================
 
 def normalize_text(text):
-    if not text:
+
+    if text is None:
         return ""
 
     text = str(text)
 
-    # Replace repeated whitespace
     text = re.sub(r"\s+", " ", text)
 
     return text.strip()
 
 
 def clean_lines(lines):
+
     cleaned = []
 
     for line in lines:
+
         line = normalize_text(line)
 
-        if line and len(line) >= 2:
+        if line and len(line) >= 1:
             cleaned.append(line)
 
     return cleaned
 
 
-# ---------------------------------------------------------
-# DOCUMENT TYPE DETECTION
-# ---------------------------------------------------------
+# =========================================================
+# DOCUMENT TYPE
+# =========================================================
 
 def detect_document_type(text):
-    text_upper = text.upper()
 
-    if "INCOME TAX DEPARTMENT" in text_upper:
-        if re.search(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", text_upper):
-            return "PAN Card"
+    t = text.upper()
 
-    if "PERMANENT ACCOUNT NUMBER" in text_upper:
+    if (
+        "INCOME TAX DEPARTMENT" in t
+        or "PERMANENT ACCOUNT NUMBER" in t
+        or re.search(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", t)
+    ):
         return "PAN Card"
 
-    if "GOVERNMENT OF INDIA" in text_upper:
-        if "AADHAAR" in text_upper or "UNIQUE IDENTIFICATION" in text_upper:
-            return "Aadhaar Card"
-
-    if "AADHAAR" in text_upper:
+    if (
+        "AADHAAR" in t
+        or "UNIQUE IDENTIFICATION AUTHORITY" in t
+        or "UNIQUE IDENTIFICATION" in t
+    ):
         return "Aadhaar Card"
 
-    if "ELECTION COMMISSION" in text_upper:
+    if "ELECTION COMMISSION" in t:
         return "Voter ID"
 
-    if "DRIVING LICENCE" in text_upper or "DRIVING LICENSE" in text_upper:
+    if (
+        "DRIVING LICENCE" in t
+        or "DRIVING LICENSE" in t
+    ):
         return "Driving Licence"
 
-    if "PASSPORT" in text_upper:
+    if "PASSPORT" in t:
         return "Passport"
 
     return "Unknown"
 
 
-# ---------------------------------------------------------
-# PAN NUMBER EXTRACTION
-# ---------------------------------------------------------
+# =========================================================
+# DOCUMENT NUMBER
+# =========================================================
 
-def extract_pan_number(text):
-    """
-    PAN format:
-    AAAAA9999A
-    """
+def extract_document_number(text, document_type):
 
-    text = text.upper()
+    t = text.upper()
 
-    pattern = r"\b[A-Z]{5}[0-9]{4}[A-Z]\b"
-
-    match = re.search(pattern, text)
-
-    if match:
-        return match.group(0)
-
-    # Try removing spaces caused by OCR
-    compact = re.sub(r"[^A-Z0-9]", "", text)
-
-    match = re.search(
-        r"[A-Z]{5}[0-9]{4}[A-Z]",
-        compact
+    # PAN
+    pan = re.search(
+        r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
+        t
     )
 
-    if match:
-        return match.group(0)
+    if pan:
+        return pan.group(0)
+
+    # Aadhaar
+    aadhaar = re.search(
+        r"\b\d{4}\s?\d{4}\s?\d{4}\b",
+        t
+    )
+
+    if aadhaar:
+        return re.sub(
+            r"\s+",
+            " ",
+            aadhaar.group(0)
+        )
 
     return ""
 
 
-# ---------------------------------------------------------
-# DATE EXTRACTION
-# ---------------------------------------------------------
+# =========================================================
+# DATE
+# =========================================================
 
 def extract_date(text):
-    """
-    Detect common DOB/date formats.
-    """
 
     patterns = [
         r"\b\d{2}[/-]\d{2}[/-]\d{4}\b",
-        r"\b\d{2}[/-]\d{2}[/-]\d{2}\b",
-        r"\b\d{4}[/-]\d{2}[/-]\d{2}\b"
+        r"\b\d{4}[/-]\d{2}[/-]\d{2}\b",
+        r"\b\d{2}[/-]\d{2}[/-]\d{2}\b"
     ]
 
     for pattern in patterns:
+
         match = re.search(pattern, text)
 
         if match:
@@ -208,32 +204,28 @@ def extract_date(text):
     return ""
 
 
-# ---------------------------------------------------------
-# NAME EXTRACTION
-# ---------------------------------------------------------
+# =========================================================
+# NAME
+# =========================================================
 
 def extract_name(lines):
-    """
-    Try to identify a person's name from OCR lines.
-    """
 
     keywords = [
         "NAME",
         "FULL NAME",
-        "SURNAME",
-        "GIVEN NAME"
+        "GIVEN NAME",
+        "SURNAME"
     ]
 
     for i, line in enumerate(lines):
 
-        upper_line = line.upper()
+        upper = line.upper()
 
         for keyword in keywords:
 
-            if keyword in upper_line:
+            if keyword in upper:
 
-                # Example:
-                # NAME: RAHUL KUMAR
+                # NAME: ABC
                 parts = re.split(
                     r"[:\-]",
                     line,
@@ -244,45 +236,37 @@ def extract_name(lines):
 
                     candidate = parts[1].strip()
 
-                    if len(candidate.split()) >= 2:
+                    if candidate:
                         return candidate
 
-                # Otherwise check next line
+                # NAME
+                # ABC
                 if i + 1 < len(lines):
 
                     candidate = lines[i + 1].strip()
 
-                    if len(candidate.split()) >= 2:
+                    if candidate:
                         return candidate
 
     return ""
 
 
-# ---------------------------------------------------------
-# ADDRESS EXTRACTION
-# ---------------------------------------------------------
+# =========================================================
+# ADDRESS
+# =========================================================
 
 def extract_address(lines):
-    address_keywords = [
-        "ADDRESS",
-        "RESIDENT",
-        "VILLAGE",
-        "STREET",
-        "ROAD",
-        "DISTRICT",
-        "STATE",
-        "PIN"
-    ]
 
-    address_lines = []
+    address = []
 
     collecting = False
 
     for line in lines:
 
-        upper_line = line.upper()
+        upper = line.upper()
 
-        if "ADDRESS" in upper_line:
+        if "ADDRESS" in upper:
+
             collecting = True
 
             parts = re.split(
@@ -292,143 +276,111 @@ def extract_address(lines):
             )
 
             if len(parts) == 2:
-                address_lines.append(
-                    parts[1].strip()
-                )
+                value = parts[1].strip()
+
+                if value:
+                    address.append(value)
 
             continue
 
         if collecting:
 
+            # Stop at another obvious field
             if any(
-                keyword in upper_line
-                for keyword in address_keywords
+                key in upper
+                for key in [
+                    "DATE OF BIRTH",
+                    "DOB",
+                    "GENDER",
+                    "SEX",
+                    "NAME:"
+                ]
             ):
-                address_lines.append(line)
+                break
 
-            elif address_lines:
-                # Stop after the address section
-                if len(address_lines) >= 4:
-                    break
+            if len(address) < 5:
+                address.append(line)
+            else:
+                break
 
-    return ", ".join(
-        clean_lines(address_lines)
+    return ", ".join(clean_lines(address))
+
+
+# =========================================================
+# RAPIDOCR RESULT
+# =========================================================
+
+def parse_ocr_result(result):
+
+    if result is None:
+        return [], [], []
+
+    texts = getattr(result, "txts", None)
+    scores = getattr(result, "scores", None)
+    boxes = getattr(result, "boxes", None)
+
+    if texts is None:
+        texts = []
+
+    if scores is None:
+        scores = []
+
+    if boxes is None:
+        boxes = []
+
+    return (
+        list(texts),
+        list(scores),
+        list(boxes)
     )
 
 
-# ---------------------------------------------------------
-# OCR RESULT PARSER
-# ---------------------------------------------------------
-
-def parse_ocr_result(result):
-    """
-    Handle different RapidOCR result formats.
-    """
-
-    texts = []
-    scores = []
-    boxes = []
-
-    if result is None:
-        return texts, scores, boxes
-
-    # Newer RapidOCR result object
-    if hasattr(result, "txts"):
-
-        texts = list(
-            getattr(result, "txts", []) or []
-        )
-
-        scores = list(
-            getattr(result, "scores", []) or []
-        )
-
-        boxes = list(
-            getattr(result, "boxes", []) or []
-        )
-
-        return texts, scores, boxes
-
-    # Tuple/list style result
-    if isinstance(result, (tuple, list)):
-
-        if len(result) >= 1:
-            first = result[0]
-
-            if isinstance(first, list):
-                boxes = first
-
-        if len(result) >= 2:
-
-            second = result[1]
-
-            if isinstance(second, list):
-
-                for item in second:
-
-                    if isinstance(item, (tuple, list)):
-
-                        if len(item) >= 2:
-
-                            texts.append(
-                                str(item[0])
-                            )
-
-                            try:
-                                scores.append(
-                                    float(item[1])
-                                )
-                            except Exception:
-                                pass
-
-        return texts, scores, boxes
-
-    return texts, scores, boxes
-
-
-# ---------------------------------------------------------
+# =========================================================
 # MAIN OCR FUNCTION
-# ---------------------------------------------------------
+# =========================================================
 
 def extract_text(image):
-    """
-    Main OCR function used by app.py.
-
-    Returns a dictionary containing:
-    document type
-    name
-    document number
-    date of birth
-    address
-    confidence
-    raw text
-    """
 
     try:
 
-        # Preprocess uploaded image
+        # ---------------------------------------------
+        # PREPROCESS
+        # ---------------------------------------------
+
         processed_image = preprocess_image(image)
 
-        # Get OCR engine
+        # ---------------------------------------------
+        # OCR
+        # ---------------------------------------------
+
         engine = get_ocr_engine()
 
-        # Run OCR
         result = engine(processed_image)
 
-        # Parse result
+        # ---------------------------------------------
+        # PARSE RESULT
+        # ---------------------------------------------
+
         texts, scores, boxes = parse_ocr_result(result)
 
-        # Clean OCR text
+        # ---------------------------------------------
+        # CLEAN TEXT
+        # ---------------------------------------------
+
         lines = clean_lines(texts)
 
         raw_text = "\n".join(lines)
 
-        # Calculate confidence
+        # ---------------------------------------------
+        # CONFIDENCE
+        # ---------------------------------------------
+
         valid_scores = []
 
         for score in scores:
 
             try:
+
                 score = float(score)
 
                 if 0 <= score <= 1:
@@ -438,35 +390,53 @@ def extract_text(image):
                     valid_scores.append(score / 100)
 
             except Exception:
-                continue
+                pass
 
         if valid_scores:
+
             confidence = round(
                 sum(valid_scores) /
                 len(valid_scores),
                 3
             )
+
         else:
+
             confidence = 0.0
 
-        # Extract fields
+        # ---------------------------------------------
+        # DOCUMENT TYPE
+        # ---------------------------------------------
+
         document_type = detect_document_type(
             raw_text
         )
 
-        document_number = extract_pan_number(
-            raw_text
+        # ---------------------------------------------
+        # FIELDS
+        # ---------------------------------------------
+
+        document_number = extract_document_number(
+            raw_text,
+            document_type
         )
 
         date_of_birth = extract_date(
             raw_text
         )
 
-        name = extract_name(lines)
+        name = extract_name(
+            lines
+        )
 
-        address = extract_address(lines)
+        address = extract_address(
+            lines
+        )
 
-        # Return structured result
+        # ---------------------------------------------
+        # RETURN
+        # ---------------------------------------------
+
         return {
             "document_type": document_type,
             "name": name,
