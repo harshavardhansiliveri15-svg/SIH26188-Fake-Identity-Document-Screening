@@ -1,9 +1,8 @@
 streamlit
 pillow
 numpy
-opencv-python-headless==4.10.0.84
-deepface==0.0.100
-tensorflow==2.21.0
-tf-keras==2.21.0
-retina-face==0.0.18
-easyocr==1.7.2
+opencv-python-headless
+rapidocr
+onnxruntime
+deepface
+tf-keras
