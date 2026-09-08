@@ -328,10 +328,11 @@ def extract_date(text, lines=None):
 # =========================================================
 
 ```python
+```python
 def extract_name(lines, document_type=""):
 
     # =====================================================
-    # 1. FIRST: EXPLICIT NAME LABEL
+    # 1. EXPLICIT NAME LABEL
     # =====================================================
 
     for i, line in enumerate(lines):
@@ -339,7 +340,7 @@ def extract_name(lines, document_type=""):
         text = normalize_text(line)
         upper = text.upper()
 
-        # NAME: ABC
+        # NAME: KHAN SUHAIL AHMED
         match = re.match(
             r"^(?:NAME|FULL\s*NAME|GIVEN\s*NAME)"
             r"\s*[:\-]\s*(.+)$",
@@ -359,11 +360,14 @@ def extract_name(lines, document_type=""):
 
             candidate = normalize_text(candidate)
 
-            if len(candidate) >= 3:
-                return candidate
+            words = candidate.split()
+
+            if len(words) >= 2:
+                return candidate.upper()
+
 
         # NAME
-        # ABC
+        # KHAN SUHAIL AHMED
         if re.fullmatch(
             r"(?:NAME|FULL\s*NAME|GIVEN\s*NAME)",
             upper
@@ -383,8 +387,159 @@ def extract_name(lines, document_type=""):
 
                 candidate = normalize_text(candidate)
 
-                if len(candidate) >= 3:
-                    return candidate
+                words = candidate.split()
+
+                if len(words) >= 2:
+                    return candidate.upper()
+
+
+    # =====================================================
+    # 2. PAN CARD NAME DETECTION
+    # =====================================================
+
+    dob_index = -1
+
+    for i, line in enumerate(lines):
+
+        upper = line.upper()
+
+        if (
+            "DATE OF BIRTH" in upper
+            or "DOB" in upper
+            or "D.O.B" in upper
+        ):
+            dob_index = i
+            break
+
+
+    if dob_index > 0:
+
+        candidates = []
+
+        blocked = [
+            "INCOME",
+            "TAX",
+            "DEPARTMENT",
+            "GOVERNMENT",
+            "INDIA",
+            "PERMANENT",
+            "ACCOUNT",
+            "NUMBER",
+            "PAN",
+            "FATHER",
+            "FATHER'S",
+            "FATHER NAME",
+            "MOTHER",
+            "ADDRESS",
+            "SIGNATURE",
+            "DATE",
+            "BIRTH",
+            "DOB",
+            "MALE",
+            "FEMALE",
+            "HOT"
+        ]
+
+        start = max(
+            0,
+            dob_index - 6
+        )
+
+        for i in range(start, dob_index):
+
+            candidate = normalize_text(lines[i])
+            upper = candidate.upper()
+
+            if not candidate:
+                continue
+
+            # Skip document-related text
+            if any(
+                word in upper
+                for word in blocked
+            ):
+                continue
+
+            # Skip PAN number
+            if re.search(
+                r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
+                upper
+            ):
+                continue
+
+            # Skip dates
+            if re.search(
+                r"\d{2}[/-]\d{2}[/-]\d{4}",
+                candidate
+            ):
+                continue
+
+            # Keep alphabetic text only
+            candidate = re.sub(
+                r"[^A-Za-z .]",
+                " ",
+                candidate
+            )
+
+            candidate = normalize_text(candidate)
+
+            words = candidate.split()
+
+            # -------------------------------------------------
+            # IMPORTANT:
+            # A person's PAN name normally contains at least
+            # two words. This prevents OCR garbage such as HOT.
+            # -------------------------------------------------
+
+            if len(words) < 2:
+                continue
+
+            if len(candidate) < 5:
+                continue
+
+            if len(candidate) > 40:
+                continue
+
+            # Require every word to contain letters
+            if not all(
+                re.search(r"[A-Za-z]", word)
+                for word in words
+            ):
+                continue
+
+            candidates.append(
+                (i, candidate.upper())
+            )
+
+
+        # -------------------------------------------------
+        # Prefer a 3-word candidate.
+        #
+        # KHAN SUHAIL AHMED -> 3 words
+        # HOT                -> 1 word -> rejected
+        # -------------------------------------------------
+
+        three_word = [
+            candidate
+            for _, candidate in candidates
+            if len(candidate.split()) == 3
+        ]
+
+        if three_word:
+            return three_word[0]
+
+        # Otherwise use a 2+ word candidate
+        if candidates:
+            return candidates[0][1]
+
+
+    # =====================================================
+    # 3. NO RELIABLE NAME FOUND
+    # =====================================================
+
+    return ""
+```
+
 
 
     # =====================================================
