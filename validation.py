@@ -3,56 +3,135 @@ import re
 
 def validate_document(ocr_result, document_image=None):
     """
-    Basic document validation/screening.
+    AI-assisted document screening.
 
-    The second argument is kept for compatibility with the
-    existing Streamlit application.
-
-    This is an AI-assisted screening prototype and does not
-    provide official document authentication.
+    Compatible with OCR dictionaries and OCR text strings.
+    The image argument is retained for compatibility with app.py.
     """
 
     try:
-        if not ocr_result:
-            return {
-                "status": "REVIEW",
-                "message": "No OCR result available.",
-                "checks": [],
-                "score": 0,
-                "max_score": 5
-            }
+        # -----------------------------------------
+        # Handle OCR result supplied as a dictionary
+        # -----------------------------------------
 
-        document_type = ocr_result.get(
-            "document_type",
-            "Unknown Document"
-        )
+        if isinstance(ocr_result, dict):
 
-        name = ocr_result.get(
-            "name",
-            "Not detected"
-        )
+            document_type = ocr_result.get(
+                "document_type",
+                "Unknown Document"
+            )
 
-        document_number = ocr_result.get(
-            "document_number",
-            "Not detected"
-        )
+            name = ocr_result.get(
+                "name",
+                "Not detected"
+            )
 
-        date_of_birth = ocr_result.get(
-            "date_of_birth",
-            "Not detected"
-        )
+            document_number = ocr_result.get(
+                "document_number",
+                "Not detected"
+            )
 
-        confidence = float(
-            ocr_result.get("confidence", 0)
-        )
+            date_of_birth = ocr_result.get(
+                "date_of_birth",
+                "Not detected"
+            )
+
+            confidence = float(
+                ocr_result.get("confidence", 0)
+            )
+
+            raw_text = ocr_result.get(
+                "raw_text",
+                ""
+            )
+
+        # -----------------------------------------
+        # Handle OCR result supplied as plain text
+        # -----------------------------------------
+
+        else:
+
+            raw_text = str(ocr_result or "")
+
+            text_lower = raw_text.lower()
+
+            if "passport" in text_lower:
+                document_type = "Passport"
+
+            elif (
+                "driver license" in text_lower
+                or "driving licence" in text_lower
+                or "driving license" in text_lower
+            ):
+                document_type = "Driver License"
+
+            elif (
+                "identity card" in text_lower
+                or "identity document" in text_lower
+                or "national id" in text_lower
+                or "id card" in text_lower
+            ):
+                document_type = "Identity Document"
+
+            elif (
+                "w-4" in text_lower
+                or "withholding certificate" in text_lower
+            ):
+                document_type = "Tax Form / W-4"
+
+            else:
+                document_type = "Unknown Document"
+
+            # Try to find a name
+            name_match = re.search(
+                r"(?:name|full name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{2,60})",
+                raw_text,
+                re.IGNORECASE
+            )
+
+            name = (
+                name_match.group(1).strip()
+                if name_match
+                else "Not detected"
+            )
+
+            # Try to find a document number
+            number_match = re.search(
+                r"(?:document\s*(?:no|number)|id\s*(?:no|number)|passport\s*(?:no|number)|license\s*(?:no|number))\s*[:\-]?\s*([A-Za-z0-9\-]{4,30})",
+                raw_text,
+                re.IGNORECASE
+            )
+
+            document_number = (
+                number_match.group(1).strip()
+                if number_match
+                else "Not detected"
+            )
+
+            # Try to find a date
+            date_match = re.search(
+                r"(?:date of birth|dob|birth date)\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})",
+                raw_text,
+                re.IGNORECASE
+            )
+
+            date_of_birth = (
+                date_match.group(1).strip()
+                if date_match
+                else "Not detected"
+            )
+
+            # Estimate confidence from whether OCR produced text
+            confidence = 80 if raw_text.strip() else 0
+
+        # -----------------------------------------
+        # Validation checks
+        # -----------------------------------------
 
         checks = []
         score = 0
 
-        # -----------------------------
-        # DOCUMENT TYPE
-        # -----------------------------
-
+        # Document type
         if document_type not in [
             "Unknown Document",
             "OCR Error"
@@ -62,10 +141,7 @@ def validate_document(ocr_result, document_image=None):
         else:
             checks.append("⚠ Document type not determined")
 
-        # -----------------------------
-        # NAME
-        # -----------------------------
-
+        # Name
         if (
             name != "Not detected"
             and len(str(name).strip()) >= 3
@@ -75,19 +151,16 @@ def validate_document(ocr_result, document_image=None):
         else:
             checks.append("⚠ Name field not detected")
 
-        # -----------------------------
-        # DOCUMENT NUMBER
-        # -----------------------------
-
+        # Document number
         if document_number != "Not detected":
 
-            cleaned_number = re.sub(
+            cleaned = re.sub(
                 r"[^A-Za-z0-9]",
                 "",
                 str(document_number)
             )
 
-            if len(cleaned_number) >= 4:
+            if len(cleaned) >= 4:
                 checks.append(
                     "✓ Document number detected"
                 )
@@ -96,23 +169,17 @@ def validate_document(ocr_result, document_image=None):
                 checks.append(
                     "⚠ Document number appears incomplete"
                 )
-
         else:
             checks.append(
                 "⚠ Document number not detected"
             )
 
-        # -----------------------------
-        # DATE
-        # -----------------------------
-
+        # Date
         if date_of_birth != "Not detected":
-
-            date_text = str(date_of_birth)
 
             if re.search(
                 r"\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}",
-                date_text
+                str(date_of_birth)
             ):
                 checks.append(
                     "✓ Date format detected"
@@ -120,18 +187,14 @@ def validate_document(ocr_result, document_image=None):
                 score += 1
             else:
                 checks.append(
-                    "⚠ Date format could not be confirmed"
+                    "⚠ Date format uncertain"
                 )
-
         else:
             checks.append(
                 "⚠ Date field not detected"
             )
 
-        # -----------------------------
-        # OCR CONFIDENCE
-        # -----------------------------
-
+        # OCR confidence
         if confidence >= 70:
             checks.append(
                 "✓ OCR confidence is good"
@@ -148,9 +211,9 @@ def validate_document(ocr_result, document_image=None):
                 "⚠ OCR confidence is low"
             )
 
-        # -----------------------------
-        # FINAL VALIDATION
-        # -----------------------------
+        # -----------------------------------------
+        # Final status
+        # -----------------------------------------
 
         if score >= 4:
             status = "PASS"
@@ -183,9 +246,7 @@ def validate_document(ocr_result, document_image=None):
         return {
             "status": "REVIEW",
             "message": "Validation could not be completed.",
-            "checks": [
-                "Validation module encountered an error."
-            ],
+            "checks": [],
             "score": 0,
             "max_score": 5,
             "error": str(e)
