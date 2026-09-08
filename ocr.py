@@ -90,7 +90,11 @@ def clean_text(text):
     for old, new in replacements.items():
         text = text.replace(old, new)
 
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    )
 
     return text.strip()
 
@@ -98,7 +102,7 @@ def clean_text(text):
 def detect_document_type(text):
     text = text.lower()
 
-    pan_words = [
+    if any(word in text for word in [
         "permanent account number",
         "permanent account",
         "income tax",
@@ -108,9 +112,7 @@ def detect_document_type(text):
         "pan number",
         "tax department",
         "tax identity"
-    ]
-
-    if any(word in text for word in pan_words):
+    ]):
         return "PAN / Tax Identity Card"
 
     if any(word in text for word in [
@@ -155,7 +157,10 @@ def extract_pan_number(text):
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, text)
+        match = re.search(
+            pattern,
+            text
+        )
 
         if match:
             if match.lastindex:
@@ -166,7 +171,39 @@ def extract_pan_number(text):
     return "Not detected"
 
 
-def valid_name(text):
+def extract_dob(text):
+    patterns = [
+        r"(?:date\s*of\s*birth|dob|birth\s*date)"
+        r"\s*[:\-]?\s*"
+        r"(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})",
+
+        r"(?:date\s*of\s*birth|dob|birth\s*date)"
+        r"\s*[:\-]?\s*"
+        r"(\d{1,2}\s+[A-Za-z]+\s+\d{2,4})"
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
+
+        if match:
+            return match.group(1)
+
+    fallback = re.search(
+        r"\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b",
+        text
+    )
+
+    if fallback:
+        return fallback.group(0)
+
+    return "Not detected"
+
+
+def looks_like_name(text):
     text = clean_text(text)
 
     text = re.sub(
@@ -183,10 +220,7 @@ def valid_name(text):
 
     words = text.split()
 
-    if not words:
-        return False
-
-    if len(words) > 6:
+    if len(words) < 1 or len(words) > 6:
         return False
 
     letters = re.sub(
@@ -201,40 +235,35 @@ def valid_name(text):
     return True
 
 
-def clean_name(text):
-    text = clean_text(text)
+def extract_name_regex(text):
+    patterns = [
+        r"(?:full\s*name)\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,70})",
+        r"(?:name)\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,70})",
+        r"(?:given\s*names?)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})",
+        r"(?:first\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})",
+        r"(?:surname|last\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})"
+    ]
 
-    text = re.sub(
-        r"[^A-Za-z .'-]",
-        " ",
-        text
-    )
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
 
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    )
+        if match:
+            candidate = clean_text(
+                match.group(1)
+            )
 
-    return text.strip()
+            if looks_like_name(candidate):
+                return candidate
+
+    return "Not detected"
 
 
-def is_name_label(text):
-    text = clean_text(text).lower()
-
-    text = re.sub(
-        r"[^a-z ]",
-        "",
-        text
-    )
-
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    ).strip()
-
-    labels = [
+def extract_name_from_boxes(detections):
+    name_labels = [
         "name",
         "full name",
         "given name",
@@ -245,310 +274,80 @@ def is_name_label(text):
         "family name"
     ]
 
-    return text in labels
+    for i, detection in enumerate(detections):
+        box = detection["box"]
+        text = clean_text(
+            detection["text"]
+        ).lower()
 
-
-def is_dob_label(text):
-    text = clean_text(text).lower()
-
-    text = re.sub(
-        r"[^a-z ]",
-        "",
-        text
-    )
-
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    ).strip()
-
-    labels = [
-        "dob",
-        "date of birth",
-        "birth date",
-        "dateofbirth"
-    ]
-
-    return text in labels
-
-
-def center_of_box(box):
-    xs = [point[0] for point in box]
-    ys = [point[1] for point in box]
-
-    return (
-        sum(xs) / len(xs),
-        sum(ys) / len(ys)
-    )
-
-
-def box_height(box):
-    ys = [point[1] for point in box]
-
-    return max(ys) - min(ys)
-
-
-def box_width(box):
-    xs = [point[0] for point in box]
-
-    return max(xs) - min(xs)
-
-
-def extract_value_near_label(
-    label_index,
-    detections,
-    max_vertical_gap=160,
-    max_horizontal_gap=900
-):
-    label_box = detections[label_index][0]
-
-    label_x, label_y = center_of_box(
-        label_box
-    )
-
-    label_height = max(
-        box_height(label_box),
-        1
-    )
-
-    candidates = []
-
-    for index, detection in enumerate(detections):
-        if index == label_index:
+        if text not in name_labels:
             continue
 
-        box, text, confidence = detection
+        label_x = sum(
+            point[0] for point in box
+        ) / 4
 
-        value = clean_text(text)
+        label_y = sum(
+            point[1] for point in box
+        ) / 4
 
-        if not value:
-            continue
+        candidates = []
 
-        x, y = center_of_box(box)
+        for j, other in enumerate(detections):
+            if i == j:
+                continue
 
-        vertical_distance = y - label_y
+            other_box = other["box"]
+            other_text = clean_text(
+                other["text"]
+            )
 
-        horizontal_distance = abs(
-            x - label_x
-        )
+            other_x = sum(
+                point[0] for point in other_box
+            ) / 4
 
-        # Prefer text appearing below the label.
-        if vertical_distance < -label_height * 0.8:
-            continue
+            other_y = sum(
+                point[1] for point in other_box
+            ) / 4
 
-        if vertical_distance > max_vertical_gap:
-            continue
+            vertical_distance = other_y - label_y
+            horizontal_distance = abs(
+                other_x - label_x
+            )
 
-        if horizontal_distance > max_horizontal_gap:
-            continue
+            if vertical_distance < -30:
+                continue
 
-        score = (
-            abs(vertical_distance) * 1.0
-            + horizontal_distance * 0.25
-            - float(confidence) * 80
-        )
+            if vertical_distance > 250:
+                continue
 
-        candidates.append(
-            (score, value, index)
-        )
+            if horizontal_distance > 1200:
+                continue
 
-    candidates.sort(
-        key=lambda item: item[0]
-    )
+            if not looks_like_name(other_text):
+                continue
 
-    if candidates:
-        return candidates[0][1]
+            score = (
+                abs(vertical_distance)
+                + horizontal_distance * 0.25
+                - other["confidence"] * 100
+            )
+
+            candidates.append(
+                (
+                    score,
+                    other_text
+                )
+            )
+
+        if candidates:
+            candidates.sort(
+                key=lambda x: x[0]
+            )
+
+            return candidates[0][1]
 
     return "Not detected"
-
-
-def extract_name_from_layout(detections):
-    # Method 1:
-    # Look for a detected NAME label and inspect
-    # nearby text boxes.
-
-    for index, detection in enumerate(detections):
-        text = clean_text(
-            detection[1]
-        )
-
-        if is_name_label(text):
-            candidate = extract_value_near_label(
-                index,
-                detections,
-                max_vertical_gap=180,
-                max_horizontal_gap=1000
-            )
-
-            candidate = clean_name(
-                candidate
-            )
-
-            if valid_name(candidate):
-                return candidate
-
-    # Method 2:
-    # Sometimes OCR detects "NAME: Alice Sharma"
-    # as a single text box.
-
-    for detection in detections:
-        text = clean_text(
-            detection[1]
-        )
-
-        match = re.search(
-            r"(?:full\s+name|name)\s*[:\-]\s*"
-            r"([A-Za-z][A-Za-z .'-]{2,70})",
-            text,
-            re.IGNORECASE
-        )
-
-        if match:
-            candidate = clean_name(
-                match.group(1)
-            )
-
-            if valid_name(candidate):
-                return candidate
-
-    # Method 3:
-    # Try a line where NAME and the value were
-    # merged by OCR.
-
-    for detection in detections:
-        text = clean_text(
-            detection[1]
-        )
-
-        if "name" in text.lower():
-            candidate = re.sub(
-                r".*?\bname\b",
-                "",
-                text,
-                flags=re.IGNORECASE
-            )
-
-            candidate = re.sub(
-                r"^[\s:\-]+",
-                "",
-                candidate
-            )
-
-            candidate = clean_name(
-                candidate
-            )
-
-            if valid_name(candidate):
-                return candidate
-
-    return "Not detected"
-
-
-def extract_dob_from_layout(detections):
-    # First try label-based extraction.
-
-    for index, detection in enumerate(detections):
-        text = clean_text(
-            detection[1]
-        )
-
-        if is_dob_label(text):
-            candidate = extract_value_near_label(
-                index,
-                detections,
-                max_vertical_gap=180,
-                max_horizontal_gap=1000
-            )
-
-            match = re.search(
-                r"\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}",
-                candidate
-            )
-
-            if match:
-                return match.group(0)
-
-            match = re.search(
-                r"\d{1,2}\s+[A-Za-z]+\s+\d{2,4}",
-                candidate
-            )
-
-            if match:
-                return match.group(0)
-
-    # Second try combined OCR text.
-
-    combined = "\n".join(
-        clean_text(item[1])
-        for item in detections
-    )
-
-    patterns = [
-        r"(?:date\s*of\s*birth|dob|birth\s*date)"
-        r"\s*[:\-]?\s*"
-        r"(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})",
-
-        r"(?:date\s*of\s*birth|dob|birth\s*date)"
-        r"\s*[:\-]?\s*"
-        r"(\d{1,2}\s+[A-Za-z]+\s+\d{2,4})"
-    ]
-
-    for pattern in patterns:
-        match = re.search(
-            pattern,
-            combined,
-            re.IGNORECASE
-        )
-
-        if match:
-            return match.group(1)
-
-    # Final fallback: any date-like text.
-
-    for pattern in [
-        r"\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b",
-        r"\b\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4}\b"
-    ]:
-        match = re.search(
-            pattern,
-            combined,
-            re.IGNORECASE
-        )
-
-        if match:
-            return match.group(0)
-
-    return "Not detected"
-
-
-def extract_document_number(text):
-    patterns = [
-        r"(?:document\s*(?:no|number))\s*[:\-]?\s*"
-        r"([A-Z0-9\-]{4,30})",
-
-        r"(?:id\s*(?:no|number))\s*[:\-]?\s*"
-        r"([A-Z0-9\-]{4,30})",
-
-        r"(?:passport\s*(?:no|number))\s*[:\-]?\s*"
-        r"([A-Z0-9\-]{4,30})",
-
-        r"(?:license|licence)\s*(?:no|number)"
-        r"\s*[:\-]?\s*"
-        r"([A-Z0-9\-]{4,30})"
-    ]
-
-    for pattern in patterns:
-        match = re.search(
-            pattern,
-            text,
-            re.IGNORECASE
-        )
-
-        if match:
-            return match.group(1).upper()
-
-    return extract_pan_number(text)
 
 
 def extract_address(text):
@@ -568,12 +367,9 @@ def extract_address(text):
         )
 
         if match:
-            value = clean_text(
+            return clean_text(
                 match.group(1)
             )
-
-            if value:
-                return value
 
     return "Not detected"
 
@@ -616,17 +412,20 @@ def extract_text(document_image):
                 result[2]
             )
 
-            if text and confidence >= 0.20:
-                detections.append(
-                    (
-                        box,
-                        text,
-                        confidence
-                    )
-                )
+            if not text:
+                continue
 
-                detected_text.append(text)
-                confidences.append(confidence)
+            if confidence < 0.20:
+                continue
+
+            detections.append({
+                "box": box,
+                "text": text,
+                "confidence": confidence
+            })
+
+            detected_text.append(text)
+            confidences.append(confidence)
 
         full_text = "\n".join(
             detected_text
@@ -652,17 +451,20 @@ def extract_text(document_image):
         ):
             document_type = "PAN / Tax Identity Card"
 
-        name = extract_name_from_layout(
+        name = extract_name_from_boxes(
             detections
         )
 
-        date_of_birth = extract_dob_from_layout(
-            detections
-        )
+        if name == "Not detected":
+            name = extract_name_regex(
+                normalized_text
+            )
 
-        document_number = extract_document_number(
+        date_of_birth = extract_dob(
             normalized_text
         )
+
+        document_number = pan_number
 
         address = extract_address(
             normalized_text
@@ -679,6 +481,24 @@ def extract_text(document_image):
         else:
             confidence = 0.0
 
+        diagnostic_lines = []
+
+        for index, detection in enumerate(
+            detections,
+            start=1
+        ):
+            diagnostic_lines.append(
+                "OCR {}: {} | confidence {:.2f}".format(
+                    index,
+                    detection["text"],
+                    detection["confidence"]
+                )
+            )
+
+        diagnostic_text = "\n".join(
+            diagnostic_lines
+        )
+
         return {
             "document_type": document_type,
             "name": name,
@@ -687,7 +507,8 @@ def extract_text(document_image):
             "address": address,
             "pan_number": pan_number,
             "confidence": confidence,
-            "raw_text": full_text
+            "raw_text": full_text,
+            "diagnostic_text": diagnostic_text
         }
 
     except Exception as e:
@@ -700,5 +521,6 @@ def extract_text(document_image):
             "pan_number": "Not detected",
             "confidence": 0.0,
             "raw_text": "",
+            "diagnostic_text": "",
             "error": str(e)
         }
