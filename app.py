@@ -430,12 +430,10 @@ if analyze:
         with st.spinner("✓ Checking document validation..."):
 
             try:
-
-                validation_result = validate_document(
-                    document_image,
-                    ocr_result
-                )
-
+                 validation_result = validate_document(
+                 ocr_result,
+                 document_image
+                  )
             except Exception as error:
 
                 st.error(f"❌ Validation module error: {error}")
