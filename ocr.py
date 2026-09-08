@@ -475,4 +475,3 @@ def extract_text(document_image):
             "raw_text": "",
             "error": str(e)
         }
-```
