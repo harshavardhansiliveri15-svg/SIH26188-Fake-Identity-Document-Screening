@@ -1,3 +1,4 @@
+"""
 TAMPERING DETECTION MODULE V4
 For SIH26188 - AI-Powered Fake Identity & Document Screening
 
