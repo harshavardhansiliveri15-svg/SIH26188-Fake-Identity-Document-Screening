@@ -1,19 +1,20 @@
 import re
 import cv2
 import numpy as np
-import easyocr
 from PIL import Image
+from rapidocr import RapidOCR
 
-_reader = None
+
+_ocr_engine = None
 
 
-def get_reader():
-    global _reader
+def get_ocr_engine():
+    global _ocr_engine
 
-    if _reader is None:
-        _reader = easyocr.Reader(["en"], gpu=False)
+    if _ocr_engine is None:
+        _ocr_engine = RapidOCR()
 
-    return _reader
+    return _ocr_engine
 
 
 def convert_to_bgr(image):
@@ -39,7 +40,12 @@ def convert_to_bgr(image):
 
         return image
 
-    return cv2.imread(str(image))
+    image = cv2.imread(str(image))
+
+    if image is None:
+        raise ValueError("Could not read document image.")
+
+    return image
 
 
 def preprocess_image(image):
@@ -50,8 +56,8 @@ def preprocess_image(image):
 
     height, width = image.shape[:2]
 
-    if width < 1800:
-        scale = 1800 / width
+    if width < 1600:
+        scale = 1600 / width
 
         image = cv2.resize(
             image,
@@ -76,22 +82,15 @@ def preprocess_image(image):
     return gray
 
 
-def clean_text(text):
-    text = str(text)
+def normalize_text(text):
+    text = str(text or "")
 
-    replacements = {
-        "|": "I",
-        "—": "-",
-        "–": "-",
-        "’": "'",
-        "`": ""
-    }
-
-    for old, new in replacements.items():
-        text = text.replace(old, new)
+    text = text.replace("|", " ")
+    text = text.replace("—", "-")
+    text = text.replace("–", "-")
 
     text = re.sub(
-        r"\s+",
+        r"[ \t]+",
         " ",
         text
     )
@@ -100,22 +99,29 @@ def clean_text(text):
 
 
 def detect_document_type(text):
-    text = text.lower()
+    text_lower = text.lower()
 
-    if any(word in text for word in [
+    pan_words = [
         "permanent account number",
         "permanent account",
         "income tax",
         "income-tax",
+        "income tax department",
         "pan card",
         "pan no",
-        "pan number",
-        "tax department",
-        "tax identity"
-    ]):
+        "pan number"
+    ]
+
+    if any(word in text_lower for word in pan_words):
         return "PAN / Tax Identity Card"
 
-    if any(word in text for word in [
+    if re.search(
+        r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
+        text.upper()
+    ):
+        return "PAN / Tax Identity Card"
+
+    if any(word in text_lower for word in [
         "passport",
         "passport no",
         "passport number",
@@ -123,15 +129,17 @@ def detect_document_type(text):
     ]):
         return "Passport"
 
-    if any(word in text for word in [
+    if any(word in text_lower for word in [
         "driver license",
         "driver's license",
         "driving license",
-        "driving licence"
+        "driving licence",
+        "license no",
+        "licence no"
     ]):
         return "Driver License"
 
-    if any(word in text for word in [
+    if any(word in text_lower for word in [
         "identity card",
         "identity document",
         "national id",
@@ -139,7 +147,7 @@ def detect_document_type(text):
     ]):
         return "Identity Document"
 
-    if any(word in text for word in [
+    if any(word in text_lower for word in [
         "birth certificate",
         "certificate of birth"
     ]):
@@ -148,30 +156,112 @@ def detect_document_type(text):
     return "Unknown Document"
 
 
+def clean_ocr_value(value):
+    value = str(value or "").strip()
+
+    value = re.sub(
+        r"\s+",
+        " ",
+        value
+    )
+
+    value = value.strip(
+        " :-|,.;"
+    )
+
+    return value
+
+
+def looks_like_person_name(value):
+    value = clean_ocr_value(value)
+
+    if len(value) < 3:
+        return False
+
+    if len(value) > 70:
+        return False
+
+    if re.search(
+        r"\d",
+        value
+    ):
+        return False
+
+    words = value.split()
+
+    if not 1 <= len(words) <= 6:
+        return False
+
+    blocked = {
+        "income",
+        "income tax",
+        "department",
+        "government",
+        "india",
+        "permanent",
+        "account",
+        "number",
+        "signature",
+        "date",
+        "birth",
+        "father",
+        "name",
+        "pan"
+    }
+
+    lowered = value.lower()
+
+    if lowered in blocked:
+        return False
+
+    return all(
+        re.fullmatch(
+            r"[A-Za-z][A-Za-z.'-]*",
+            word
+        )
+        for word in words
+    )
+
+
 def extract_pan_number(text):
-    text = text.upper()
+    text_upper = text.upper()
 
     patterns = [
         r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
-        r"(?:PAN|P\.?A\.?N\.?)\s*(?:NO|NUMBER|CARD)?\s*[:\-]?\s*([A-Z]{5}[0-9]{4}[A-Z])"
+
+        r"(?:PAN|P\.?A\.?N\.?)"
+        r"\s*(?:NO|NUMBER|CARD)?"
+        r"\s*[:\-]?\s*"
+        r"([A-Z]{5}[0-9]{4}[A-Z])"
     ]
 
     for pattern in patterns:
-        match = re.search(
+        matches = re.findall(
             pattern,
-            text
+            text_upper
         )
 
-        if match:
-            if match.lastindex:
-                return match.group(1).upper()
+        for match in matches:
 
-            return match.group(0).upper()
+            if isinstance(match, tuple):
+                match = match[0]
+
+            candidate = re.sub(
+                r"[^A-Z0-9]",
+                "",
+                str(match)
+            )
+
+            if re.fullmatch(
+                r"[A-Z]{5}[0-9]{4}[A-Z]",
+                candidate
+            ):
+                return candidate
 
     return "Not detected"
 
 
-def extract_dob(text):
+def extract_date_of_birth(text):
     patterns = [
         r"(?:date\s*of\s*birth|dob|birth\s*date)"
         r"\s*[:\-]?\s*"
@@ -179,7 +269,11 @@ def extract_dob(text):
 
         r"(?:date\s*of\s*birth|dob|birth\s*date)"
         r"\s*[:\-]?\s*"
-        r"(\d{1,2}\s+[A-Za-z]+\s+\d{2,4})"
+        r"(\d{1,2}\s+[A-Za-z]+\s+\d{2,4})",
+
+        r"(?:date\s*of\s*birth|dob|birth\s*date)"
+        r"\s*[:\-]?\s*"
+        r"([A-Za-z]+\s+\d{1,2},?\s+\d{2,4})"
     ]
 
     for pattern in patterns:
@@ -190,162 +284,85 @@ def extract_dob(text):
         )
 
         if match:
-            return match.group(1)
-
-    fallback = re.search(
-        r"\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b",
-        text
-    )
-
-    if fallback:
-        return fallback.group(0)
-
-    return "Not detected"
-
-
-def looks_like_name(text):
-    text = clean_text(text)
-
-    text = re.sub(
-        r"[^A-Za-z .'-]",
-        " ",
-        text
-    )
-
-    text = re.sub(
-        r"\s+",
-        " ",
-        text
-    ).strip()
-
-    words = text.split()
-
-    if len(words) < 1 or len(words) > 6:
-        return False
-
-    letters = re.sub(
-        r"[^A-Za-z]",
-        "",
-        text
-    )
-
-    if len(letters) < 3:
-        return False
-
-    return True
-
-
-def extract_name_regex(text):
-    patterns = [
-        r"(?:full\s*name)\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,70})",
-        r"(?:name)\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,70})",
-        r"(?:given\s*names?)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})",
-        r"(?:first\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})",
-        r"(?:surname|last\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})"
-    ]
-
-    for pattern in patterns:
-        match = re.search(
-            pattern,
-            text,
-            re.IGNORECASE
-        )
-
-        if match:
-            candidate = clean_text(
+            return clean_ocr_value(
                 match.group(1)
             )
 
-            if looks_like_name(candidate):
-                return candidate
-
     return "Not detected"
 
 
-def extract_name_from_boxes(detections):
+def extract_name_from_lines(lines):
     name_labels = [
         "name",
         "full name",
+        "full-name",
+        "surname",
         "given name",
         "given names",
-        "first name",
-        "surname",
-        "last name",
-        "family name"
+        "first name"
     ]
 
-    for i, detection in enumerate(detections):
-        box = detection["box"]
-        text = clean_text(
-            detection["text"]
-        ).lower()
+    father_labels = [
+        "father",
+        "father name",
+        "father's name",
+        "father s name"
+    ]
 
-        if text not in name_labels:
+    for index, line in enumerate(lines):
+
+        clean_line = clean_ocr_value(line)
+        lower_line = clean_line.lower()
+
+        for label in name_labels:
+
+            if lower_line.startswith(label):
+
+                remainder = re.sub(
+                    rf"^{re.escape(label)}"
+                    r"\s*[:\-]?\s*",
+                    "",
+                    clean_line,
+                    flags=re.IGNORECASE
+                )
+
+                if looks_like_person_name(
+                    remainder
+                ):
+                    return remainder
+
+                if index + 1 < len(lines):
+
+                    next_line = clean_ocr_value(
+                        lines[index + 1]
+                    )
+
+                    if looks_like_person_name(
+                        next_line
+                    ):
+                        return next_line
+
+    for index, line in enumerate(lines):
+
+        lower_line = line.lower()
+
+        if any(
+            label in lower_line
+            for label in father_labels
+        ):
             continue
 
-        label_x = sum(
-            point[0] for point in box
-        ) / 4
+        if looks_like_person_name(line):
 
-        label_y = sum(
-            point[1] for point in box
-        ) / 4
+            upper_line = line.upper()
 
-        candidates = []
-
-        for j, other in enumerate(detections):
-            if i == j:
-                continue
-
-            other_box = other["box"]
-            other_text = clean_text(
-                other["text"]
-            )
-
-            other_x = sum(
-                point[0] for point in other_box
-            ) / 4
-
-            other_y = sum(
-                point[1] for point in other_box
-            ) / 4
-
-            vertical_distance = other_y - label_y
-            horizontal_distance = abs(
-                other_x - label_x
-            )
-
-            if vertical_distance < -30:
-                continue
-
-            if vertical_distance > 250:
-                continue
-
-            if horizontal_distance > 1200:
-                continue
-
-            if not looks_like_name(other_text):
-                continue
-
-            score = (
-                abs(vertical_distance)
-                + horizontal_distance * 0.25
-                - other["confidence"] * 100
-            )
-
-            candidates.append(
-                (
-                    score,
-                    other_text
-                )
-            )
-
-        if candidates:
-            candidates.sort(
-                key=lambda x: x[0]
-            )
-
-            return candidates[0][1]
+            if upper_line not in [
+                "PERMANENT ACCOUNT NUMBER",
+                "INCOME TAX DEPARTMENT",
+                "GOVT OF INDIA",
+                "GOVERNMENT OF INDIA"
+            ]:
+                return clean_ocr_value(line)
 
     return "Not detected"
 
@@ -360,6 +377,7 @@ def extract_address(text):
     ]
 
     for pattern in patterns:
+
         match = re.search(
             pattern,
             text,
@@ -367,75 +385,106 @@ def extract_address(text):
         )
 
         if match:
-            return clean_text(
+
+            value = clean_ocr_value(
                 match.group(1)
             )
+
+            if len(value) >= 5:
+                return value
 
     return "Not detected"
 
 
 def extract_text(document_image):
+
     try:
+
         processed_image = preprocess_image(
             document_image
         )
 
-        reader = get_reader()
+        engine = get_ocr_engine()
 
-        results = reader.readtext(
-            processed_image,
-            detail=1,
-            paragraph=False,
-            contrast_ths=0.05,
-            adjust_contrast=0.7,
-            text_threshold=0.5,
-            low_text=0.2,
-            link_threshold=0.3
+        result = engine(
+            processed_image
         )
 
-        detections = []
+        texts = []
+        scores = []
+
+        if result is not None:
+
+            if hasattr(result, "txts"):
+                texts = list(
+                    result.txts or []
+                )
+
+            if hasattr(result, "scores"):
+                scores = list(
+                    result.scores or []
+                )
+
+            if isinstance(result, tuple):
+
+                if len(result) >= 2:
+
+                    first = result[0]
+                    second = result[1]
+
+                    if isinstance(first, list):
+                        texts = first
+
+                    if isinstance(second, list):
+                        scores = second
 
         detected_text = []
-        confidences = []
 
-        for result in results:
-            if len(result) < 3:
-                continue
+        for text in texts:
 
-            box = result[0]
+            text = clean_ocr_value(text)
 
-            text = clean_text(
-                result[1]
-            )
-
-            confidence = float(
-                result[2]
-            )
-
-            if not text:
-                continue
-
-            if confidence < 0.20:
-                continue
-
-            detections.append({
-                "box": box,
-                "text": text,
-                "confidence": confidence
-            })
-
-            detected_text.append(text)
-            confidences.append(confidence)
+            if text:
+                detected_text.append(text)
 
         full_text = "\n".join(
             detected_text
         )
 
-        normalized_text = re.sub(
-            r"[ \t]+",
-            " ",
+        normalized_text = normalize_text(
             full_text
         )
+
+        if scores:
+
+            valid_scores = []
+
+            for score in scores:
+
+                try:
+                    value = float(score)
+
+                    if 0 <= value <= 1:
+                        valid_scores.append(value)
+
+                except Exception:
+                    pass
+
+            if valid_scores:
+
+                confidence = round(
+                    (
+                        sum(valid_scores)
+                        / len(valid_scores)
+                    ) * 100,
+                    2
+                )
+
+            else:
+                confidence = 0.0
+
+        else:
+            confidence = 0.0
 
         document_type = detect_document_type(
             normalized_text
@@ -445,82 +494,46 @@ def extract_text(document_image):
             normalized_text
         )
 
-        if (
-            pan_number != "Not detected"
-            and document_type == "Unknown Document"
-        ):
+        if pan_number != "Not detected":
             document_type = "PAN / Tax Identity Card"
 
-        name = extract_name_from_boxes(
-            detections
-        )
-
-        if name == "Not detected":
-            name = extract_name_regex(
-                normalized_text
-            )
-
-        date_of_birth = extract_dob(
+        date_of_birth = extract_date_of_birth(
             normalized_text
         )
 
-        document_number = pan_number
+        lines = [
+            clean_ocr_value(x)
+            for x in detected_text
+            if clean_ocr_value(x)
+        ]
+
+        name = extract_name_from_lines(
+            lines
+        )
 
         address = extract_address(
             normalized_text
         )
 
-        if confidences:
-            confidence = round(
-                (
-                    sum(confidences)
-                    / len(confidences)
-                ) * 100,
-                2
-            )
-        else:
-            confidence = 0.0
-
-        diagnostic_lines = []
-
-        for index, detection in enumerate(
-            detections,
-            start=1
-        ):
-            diagnostic_lines.append(
-                "OCR {}: {} | confidence {:.2f}".format(
-                    index,
-                    detection["text"],
-                    detection["confidence"]
-                )
-            )
-
-        diagnostic_text = "\n".join(
-            diagnostic_lines
-        )
-
         return {
             "document_type": document_type,
             "name": name,
-            "document_number": document_number,
+            "document_number": pan_number,
             "date_of_birth": date_of_birth,
             "address": address,
-            "pan_number": pan_number,
             "confidence": confidence,
-            "raw_text": full_text,
-            "diagnostic_text": diagnostic_text
+            "raw_text": full_text
         }
 
     except Exception as e:
+
         return {
             "document_type": "OCR Error",
             "name": "Not detected",
             "document_number": "Not detected",
             "date_of_birth": "Not detected",
             "address": "Not detected",
-            "pan_number": "Not detected",
             "confidence": 0.0,
             "raw_text": "",
-            "diagnostic_text": "",
             "error": str(e)
         }
