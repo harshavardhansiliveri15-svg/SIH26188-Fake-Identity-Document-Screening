@@ -625,7 +625,7 @@ if analyze:
                 f"""
                 <div class="status-card">
                     <div class="status-title">🔤 OCR Confidence</div>
-                    <div class="status-value">{confidence}%</div>
+                    <div class="status-value">{confidence * 100:.1f}%</div>
                     <div class="status-detail">{document_type}</div>
                 </div>
                 """,
