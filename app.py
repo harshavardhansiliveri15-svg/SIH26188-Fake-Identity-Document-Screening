@@ -698,7 +698,7 @@ if analyze:
 
             st.write(f"**Date of Birth:** {dob}")
             st.write(f"**Address:** {address}")
-            st.write(f"**OCR Confidence:** {confidence}%")
+            st.write(f"**OCR Confidence:** {confidence * 100:.1f}%")
 
         st.markdown("</div>", unsafe_allow_html=True)
 
