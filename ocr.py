@@ -329,47 +329,150 @@ def extract_date(text, lines=None):
 
 def extract_name(lines):
 
-    keywords = [
-        "NAME",
-        "FULL NAME",
-        "GIVEN NAME",
-        "SURNAME"
-    ]
-
+    # First try explicit NAME labels
     for i, line in enumerate(lines):
 
-        upper = line.upper().strip()
+        text = normalize_text(line)
+        upper = text.upper()
 
-        for keyword in keywords:
+        # NAME: HARSHAVARDHAN
+        match = re.match(
+            r"^(?:NAME|FULL\s*NAME|GIVEN\s*NAME|SURNAME)"
+            r"\s*[:\-]?\s*(.*)$",
+            text,
+            re.IGNORECASE
+        )
 
-            if upper.startswith(keyword):
+        if match:
 
-                # NAME: ABC
-                parts = re.split(
-                    r"[:\-]",
-                    line,
-                    maxsplit=1
+            candidate = normalize_text(match.group(1))
+
+            if candidate and candidate.upper() not in [
+                "NAME",
+                "FULL NAME",
+                "GIVEN NAME",
+                "SURNAME"
+            ]:
+
+                # Remove unwanted characters
+                candidate = re.sub(
+                    r"[^A-Za-z .]",
+                    " ",
+                    candidate
                 )
 
-                if len(parts) == 2:
+                candidate = normalize_text(candidate)
 
-                    candidate = normalize_text(
-                        parts[1]
-                    )
+                if len(candidate) >= 3:
+                    return candidate
 
-                    if candidate:
-                        return candidate
+        # NAME on one line, actual name on next line
+        if re.fullmatch(
+            r"(?:NAME|FULL\s*NAME|GIVEN\s*NAME|SURNAME)",
+            upper
+        ):
 
-                # NAME
-                # ABC
-                if i + 1 < len(lines):
+            if i + 1 < len(lines):
 
-                    candidate = normalize_text(
-                        lines[i + 1]
-                    )
+                candidate = normalize_text(lines[i + 1])
 
-                    if candidate:
-                        return candidate
+                candidate = re.sub(
+                    r"[^A-Za-z .]",
+                    " ",
+                    candidate
+                )
+
+                candidate = normalize_text(candidate)
+
+                if len(candidate) >= 3:
+                    return candidate
+
+
+    # -----------------------------------------------------
+    # PAN fallback
+    #
+    # If OCR does not recognize the NAME label,
+    # search for a likely person's name.
+    # -----------------------------------------------------
+
+    blocked = [
+        "INCOME",
+        "TAX",
+        "DEPARTMENT",
+        "GOVERNMENT",
+        "INDIA",
+        "PERMANENT",
+        "ACCOUNT",
+        "NUMBER",
+        "PAN",
+        "DATE",
+        "BIRTH",
+        "DOB",
+        "ADDRESS",
+        "SIGNATURE",
+        "FATHER",
+        "MOTHER",
+        "MALE",
+        "FEMALE"
+    ]
+
+    candidates = []
+
+    for index, line in enumerate(lines):
+
+        candidate = normalize_text(line)
+
+        if not candidate:
+            continue
+
+        upper = candidate.upper()
+
+        # Skip known document information
+        if any(word in upper for word in blocked):
+            continue
+
+        # Skip PAN number
+        if re.search(
+            r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
+            upper
+        ):
+            continue
+
+        # Skip dates
+        if re.search(
+            r"\b\d{2}[/-]\d{2}[/-]\d{4}\b",
+            candidate
+        ):
+            continue
+
+        # Name should contain letters
+        letters = re.findall(
+            r"[A-Za-z]",
+            candidate
+        )
+
+        if len(letters) < 3:
+            continue
+
+        # Avoid long address-like text
+        if len(candidate) > 45:
+            continue
+
+        # Must mostly contain letters/spaces
+        if not re.fullmatch(
+            r"[A-Za-z .]+",
+            candidate
+        ):
+            continue
+
+        candidates.append(
+            (index, candidate)
+        )
+
+
+    # Return the first plausible name
+    if candidates:
+        return candidates[0][1]
 
     return ""
 
