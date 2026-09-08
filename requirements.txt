@@ -2,7 +2,7 @@ streamlit
 pillow
 numpy
 opencv-python-headless==4.10.0.84
-tensorflow==2.15.1
-keras==2.15.0
-deepface==0.0.93
-retina-face==0.0.17
+deepface==0.0.100
+tensorflow==2.21.0
+tf-keras==2.21.0
+retina-face==0.0.18
