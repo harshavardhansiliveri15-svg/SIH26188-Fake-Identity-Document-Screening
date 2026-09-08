@@ -84,6 +84,11 @@ def preprocess_image(image):
 
     image = convert_to_bgr(image)
 
+    if image is None:
+        raise ValueError(
+            "Could not read document image."
+        )
+
     height, width = image.shape[:2]
 
     # Enlarge small images
@@ -178,7 +183,6 @@ def detect_document_type(text):
     ):
         return "PAN / Tax Identity Card"
 
-    # Standard PAN format
     if re.search(
         r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
         text.upper()
@@ -283,60 +287,68 @@ def extract_pan_number(text):
 
 def extract_date_of_birth(text):
 
-    patterns = [
+    if not text:
+        return "Not detected"
 
-        r"(?:date\s*of\s*birth|dob|birth\s*date)"
-        r"\s*[:\-]?\s*"
-        r"(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})",
+    text = str(text)
 
-        r"(?:date\s*of\s*birth|dob|birth\s*date)"
-        r"\s*[:\-]?\s*"
-        r"(\d{1,2}\s+[A-Za-z]+\s+\d{2,4})",
+    # --------------------------------------------------------
+    # Normalize common OCR mistakes
+    # --------------------------------------------------------
 
-        r"(?:date\s*of\s*birth|dob|birth\s*date)"
-        r"\s*[:\-]?\s*"
-        r"([A-Za-z]+\s+\d{1,2},?\s+\d{2,4})"
-    ]
-
-    for pattern in patterns:
-
-        match = re.search(
-            pattern,
-            text,
-            re.IGNORECASE
-        )
-
-        if match:
-
-            return clean_ocr_value(
-                match.group(1)
-            )
-
-    # Handle common OCR mistakes around DOB
     corrected = text
 
-    corrected = re.sub(
-        r"\bD0B\b",
-        "DOB",
-        corrected,
-        flags=re.IGNORECASE
+    corrections = {
+        "D0B": "DOB",
+        "D8B": "DOB",
+        "D.O.B": "DOB",
+        "D.O.B.": "DOB",
+        "DATE 0F BIRTH": "DATE OF BIRTH",
+        "DATE 0F B1RTH": "DATE OF BIRTH",
+        "DATE OF B1RTH": "DATE OF BIRTH",
+        "B1RTH": "BIRTH",
+    }
+
+    for old, new in corrections.items():
+
+        corrected = re.sub(
+            re.escape(old),
+            new,
+            corrected,
+            flags=re.IGNORECASE
+        )
+
+    # --------------------------------------------------------
+    # Supported date formats
+    # --------------------------------------------------------
+
+    date_pattern = (
+        r"("
+        r"\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}"
+        r"|"
+        r"\d{1,2}\s+[A-Za-z]{3,12}\s+\d{2,4}"
+        r"|"
+        r"[A-Za-z]{3,12}\s+\d{1,2},?\s+\d{2,4}"
+        r")"
     )
 
-    corrected = re.sub(
-        r"\bD8B\b",
-        "DOB",
-        corrected,
-        flags=re.IGNORECASE
-    )
+    # --------------------------------------------------------
+    # 1. Explicit DOB / Date of Birth
+    # --------------------------------------------------------
 
-    corrected = re.sub(
-        r"\bDATE\s+0F\s+BIRTH\b",
-        "DATE OF BIRTH",
-        corrected,
-        flags=re.IGNORECASE
-    )
+    dob_patterns = [
 
-    for pattern in patterns:
+        rf"(?:DATE\s*OF\s*BIRTH)"
+        rf"\s*[:\-]?\s*{date_pattern}",
+
+        rf"(?:DOB)"
+        rf"\s*[:\-]?\s*{date_pattern}",
+
+        rf"(?:BIRTH\s*DATE)"
+        rf"\s*[:\-]?\s*{date_pattern}",
+    ]
+
+    for pattern in dob_patterns:
 
         match = re.search(
             pattern,
@@ -347,7 +359,138 @@ def extract_date_of_birth(text):
         if match:
 
             return clean_ocr_value(
+                match.group(match.lastindex)
+            )
+
+    # --------------------------------------------------------
+    # 2. DOB label and date on separate OCR lines
+    # --------------------------------------------------------
+
+    lines = [
+        clean_ocr_value(line)
+        for line in corrected.splitlines()
+        if clean_ocr_value(line)
+    ]
+
+    for index, line in enumerate(lines):
+
+        lower_line = line.lower()
+
+        dob_label_found = any(
+            label in lower_line
+            for label in [
+                "date of birth",
+                "dob",
+                "birth date",
+                "date 0f birth",
+                "date of b1rth"
+            ]
+        )
+
+        if not dob_label_found:
+            continue
+
+        # Same line
+        match = re.search(
+            date_pattern,
+            line,
+            re.IGNORECASE
+        )
+
+        if match:
+
+            return clean_ocr_value(
                 match.group(1)
+            )
+
+        # Next line
+        if index + 1 < len(lines):
+
+            next_line = lines[index + 1]
+
+            match = re.search(
+                date_pattern,
+                next_line,
+                re.IGNORECASE
+            )
+
+            if match:
+
+                return clean_ocr_value(
+                    match.group(1)
+                )
+
+    # --------------------------------------------------------
+    # 3. Fuzzy OCR matching
+    # --------------------------------------------------------
+
+    fuzzy_patterns = [
+
+        r"(?:D[O0]B)"
+        r"\s*[:\-]?\s*"
+        rf"{date_pattern}",
+
+        r"(?:DATE\s+[O0]\s*F\s+BIRTH)"
+        r"\s*[:\-]?\s*"
+        rf"{date_pattern}",
+
+        r"(?:DATE\s+OF\s+B[1I]RTH)"
+        r"\s*[:\-]?\s*"
+        rf"{date_pattern}",
+    ]
+
+    for pattern in fuzzy_patterns:
+
+        match = re.search(
+            pattern,
+            corrected,
+            re.IGNORECASE
+        )
+
+        if match:
+
+            return clean_ocr_value(
+                match.group(match.lastindex)
+            )
+
+    # --------------------------------------------------------
+    # 4. Conservative fallback
+    # --------------------------------------------------------
+
+    for match in re.finditer(
+        date_pattern,
+        corrected,
+        re.IGNORECASE
+    ):
+
+        date_value = match.group(1)
+
+        start = max(
+            0,
+            match.start() - 100
+        )
+
+        end = min(
+            len(corrected),
+            match.end() + 100
+        )
+
+        nearby_text = corrected[
+            start:end
+        ].lower()
+
+        if any(
+            keyword in nearby_text
+            for keyword in [
+                "dob",
+                "date of birth",
+                "birth date",
+                "birth"
+            ]
+        ):
+
+            return clean_ocr_value(
+                date_value
             )
 
     return "Not detected"
@@ -367,7 +510,6 @@ def looks_like_person_name(value):
     if len(value) > 70:
         return False
 
-    # Names should not contain numbers
     if re.search(
         r"\d",
         value
@@ -376,7 +518,6 @@ def looks_like_person_name(value):
 
     words = value.split()
 
-    # Require at least first + last name
     if not 2 <= len(words) <= 6:
         return False
 
@@ -417,7 +558,6 @@ def looks_like_person_name(value):
     if lowered in blocked:
         return False
 
-    # Reject known header fragments
     blocked_phrases = [
         "income tax department",
         "government of india",
@@ -432,7 +572,6 @@ def looks_like_person_name(value):
         if phrase in lowered:
             return False
 
-    # Every word should look like a name word
     for word in words:
 
         if not re.fullmatch(
@@ -453,9 +592,10 @@ def looks_like_person_name(value):
 
 def is_name_label(text):
 
-    text = clean_ocr_value(text).lower()
+    text = clean_ocr_value(
+        text
+    ).lower()
 
-    # Normalize common OCR errors
     text = text.replace(
         "nane",
         "name"
@@ -506,15 +646,13 @@ def extract_name_from_lines(lines):
     ]
 
     # --------------------------------------------------------
-    # METHOD 1
-    # Explicit NAME label
+    # METHOD 1: Explicit NAME label
     # --------------------------------------------------------
 
     for index, line in enumerate(cleaned_lines):
 
         if is_name_label(line):
 
-            # Check same line first
             remainder = re.sub(
                 r"^(?:name|full\s*name|given\s*name|"
                 r"given\s*names|first\s*name|surname)"
@@ -529,7 +667,6 @@ def extract_name_from_lines(lines):
             ):
                 return remainder
 
-            # Check next line
             if index + 1 < len(cleaned_lines):
 
                 next_line = cleaned_lines[
@@ -542,8 +679,7 @@ def extract_name_from_lines(lines):
                     return next_line
 
     # --------------------------------------------------------
-    # METHOD 2
-    # NAME label may have OCR noise
+    # METHOD 2: OCR-damaged NAME label
     # --------------------------------------------------------
 
     for index, line in enumerate(cleaned_lines):
@@ -593,8 +729,7 @@ def extract_name_from_lines(lines):
                     return next_line
 
     # --------------------------------------------------------
-    # METHOD 3
-    # Layout-aware conservative fallback
+    # METHOD 3: Conservative fallback
     # --------------------------------------------------------
 
     candidates = []
@@ -608,7 +743,6 @@ def extract_name_from_lines(lines):
 
         lower = line.lower()
 
-        # Do not accept anything related to father name
         if any(
             word in lower
             for word in [
@@ -619,7 +753,6 @@ def extract_name_from_lines(lines):
         ):
             continue
 
-        # Do not accept obvious document headings
         if any(
             phrase in lower
             for phrase in [
@@ -635,7 +768,6 @@ def extract_name_from_lines(lines):
 
         score = 0
 
-        # Prefer 2-4 word names
         word_count = len(
             line.split()
         )
@@ -643,14 +775,12 @@ def extract_name_from_lines(lines):
         if 2 <= word_count <= 4:
             score += 3
 
-        # Prefer normal-looking capitalization
         if any(
             c.isupper()
             for c in line
         ):
             score += 1
 
-        # Prefer lines near likely identity information
         nearby = " ".join(
             cleaned_lines[
                 max(0, index - 2):
@@ -677,8 +807,6 @@ def extract_name_from_lines(lines):
             (score, index, line)
         )
 
-    # Only accept a fallback candidate
-    # when confidence is reasonably strong.
     if candidates:
 
         candidates.sort(
@@ -746,10 +874,6 @@ def parse_ocr_result(result):
     if result is None:
         return texts, scores, boxes
 
-    # --------------------------------------------------------
-    # RapidOCR object format
-    # --------------------------------------------------------
-
     if hasattr(result, "txts"):
 
         try:
@@ -776,10 +900,6 @@ def parse_ocr_result(result):
             )
         except Exception:
             boxes = []
-
-    # --------------------------------------------------------
-    # Tuple/list compatibility
-    # --------------------------------------------------------
 
     if isinstance(result, tuple):
 
@@ -859,11 +979,13 @@ def extract_text(document_image):
                 value = float(score)
 
                 if 0 <= value <= 1:
+
                     valid_scores.append(
                         value
                     )
 
                 elif 1 < value <= 100:
+
                     valid_scores.append(
                         value / 100
                     )
@@ -919,11 +1041,11 @@ def extract_text(document_image):
             )
 
         # ----------------------------------------------------
-        # DOB
+        # DATE OF BIRTH
         # ----------------------------------------------------
 
         date_of_birth = extract_date_of_birth(
-            normalized_text
+            full_text
         )
 
         # ----------------------------------------------------
@@ -949,7 +1071,7 @@ def extract_text(document_image):
         )
 
         # ----------------------------------------------------
-        # RETURN RESULT
+        # FINAL RESULT
         # ----------------------------------------------------
 
         return {
