@@ -733,8 +733,8 @@ if analyze:
 
        with result_col2:
 
-    st.markdown(
-        '<div class="result-card">',
+           st.markdown(
+             '<div class="result-card">',
         unsafe_allow_html=True
     )
 
