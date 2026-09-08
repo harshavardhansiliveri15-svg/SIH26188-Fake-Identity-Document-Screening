@@ -22,28 +22,45 @@ def convert_to_bgr(image):
         image = np.array(image)
 
         if image.ndim == 2:
-            return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+            return cv2.cvtColor(
+                image,
+                cv2.COLOR_GRAY2BGR
+            )
 
         if image.shape[2] == 4:
-            return cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
+            return cv2.cvtColor(
+                image,
+                cv2.COLOR_RGBA2BGR
+            )
 
-        return cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+        return cv2.cvtColor(
+            image,
+            cv2.COLOR_RGB2BGR
+        )
 
     if isinstance(image, np.ndarray):
         image = image.copy()
 
         if image.ndim == 2:
-            return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+            return cv2.cvtColor(
+                image,
+                cv2.COLOR_GRAY2BGR
+            )
 
         if image.shape[2] == 4:
-            return cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+            return cv2.cvtColor(
+                image,
+                cv2.COLOR_BGRA2BGR
+            )
 
         return image
 
     image = cv2.imread(str(image))
 
     if image is None:
-        raise ValueError("Could not read document image.")
+        raise ValueError(
+            "Could not read document image."
+        )
 
     return image
 
@@ -52,7 +69,9 @@ def preprocess_image(image):
     image = convert_to_bgr(image)
 
     if image is None:
-        raise ValueError("Could not read document image.")
+        raise ValueError(
+            "Could not read document image."
+        )
 
     height, width = image.shape[:2]
 
@@ -112,7 +131,10 @@ def detect_document_type(text):
         "pan number"
     ]
 
-    if any(word in text_lower for word in pan_words):
+    if any(
+        word in text_lower
+        for word in pan_words
+    ):
         return "PAN / Tax Identity Card"
 
     if re.search(
@@ -121,36 +143,48 @@ def detect_document_type(text):
     ):
         return "PAN / Tax Identity Card"
 
-    if any(word in text_lower for word in [
-        "passport",
-        "passport no",
-        "passport number",
-        "nationality"
-    ]):
+    if any(
+        word in text_lower
+        for word in [
+            "passport",
+            "passport no",
+            "passport number",
+            "nationality"
+        ]
+    ):
         return "Passport"
 
-    if any(word in text_lower for word in [
-        "driver license",
-        "driver's license",
-        "driving license",
-        "driving licence",
-        "license no",
-        "licence no"
-    ]):
+    if any(
+        word in text_lower
+        for word in [
+            "driver license",
+            "driver's license",
+            "driving license",
+            "driving licence",
+            "license no",
+            "licence no"
+        ]
+    ):
         return "Driver License"
 
-    if any(word in text_lower for word in [
-        "identity card",
-        "identity document",
-        "national id",
-        "id card"
-    ]):
+    if any(
+        word in text_lower
+        for word in [
+            "identity card",
+            "identity document",
+            "national id",
+            "id card"
+        ]
+    ):
         return "Identity Document"
 
-    if any(word in text_lower for word in [
-        "birth certificate",
-        "certificate of birth"
-    ]):
+    if any(
+        word in text_lower
+        for word in [
+            "birth certificate",
+            "certificate of birth"
+        ]
+    ):
         return "Birth Certificate"
 
     return "Unknown Document"
@@ -175,7 +209,7 @@ def clean_ocr_value(value):
 def looks_like_person_name(value):
     value = clean_ocr_value(value)
 
-    if len(value) < 3:
+    if len(value) < 5:
         return False
 
     if len(value) > 70:
@@ -189,14 +223,13 @@ def looks_like_person_name(value):
 
     words = value.split()
 
-    if not 1 <= len(words) <= 6:
+    if not 2 <= len(words) <= 6:
         return False
 
     blocked = {
         "income",
         "income tax",
         "department",
-        "government",
         "india",
         "permanent",
         "account",
@@ -205,8 +238,13 @@ def looks_like_person_name(value):
         "date",
         "birth",
         "father",
+        "father name",
         "name",
-        "pan"
+        "pan",
+        "government",
+        "govt",
+        "of",
+        "tax"
     }
 
     lowered = value.lower()
@@ -214,13 +252,19 @@ def looks_like_person_name(value):
     if lowered in blocked:
         return False
 
-    return all(
-        re.fullmatch(
+    for word in words:
+
+        if not re.fullmatch(
             r"[A-Za-z][A-Za-z.'-]*",
             word
-        )
-        for word in words
-    )
+        ):
+            return False
+
+        # Reject extremely short OCR fragments
+        if len(word) < 2:
+            return False
+
+    return True
 
 
 def extract_pan_number(text):
@@ -236,6 +280,7 @@ def extract_pan_number(text):
     ]
 
     for pattern in patterns:
+
         matches = re.findall(
             pattern,
             text_upper
@@ -277,6 +322,7 @@ def extract_date_of_birth(text):
     ]
 
     for pattern in patterns:
+
         match = re.search(
             pattern,
             text,
@@ -309,9 +355,15 @@ def extract_name_from_lines(lines):
         "father s name"
     ]
 
+    # --------------------------------------------------
+    # STEP 1:
+    # Look specifically for a NAME label.
+    # --------------------------------------------------
+
     for index, line in enumerate(lines):
 
         clean_line = clean_ocr_value(line)
+
         lower_line = clean_line.lower()
 
         for label in name_labels:
@@ -331,6 +383,9 @@ def extract_name_from_lines(lines):
                 ):
                     return remainder
 
+                # Sometimes OCR places the name
+                # on the line immediately below "Name"
+
                 if index + 1 < len(lines):
 
                     next_line = clean_ocr_value(
@@ -342,27 +397,54 @@ def extract_name_from_lines(lines):
                     ):
                         return next_line
 
-    for index, line in enumerate(lines):
+    # --------------------------------------------------
+    # STEP 2:
+    # Conservative fallback.
+    #
+    # Only accept a name containing at least
+    # two proper-looking words.
+    # --------------------------------------------------
 
-        lower_line = line.lower()
+    for line in lines:
 
+        clean_line = clean_ocr_value(line)
+
+        if not clean_line:
+            continue
+
+        lower_line = clean_line.lower()
+
+        # Ignore father-related lines
         if any(
             label in lower_line
             for label in father_labels
         ):
             continue
 
-        if looks_like_person_name(line):
+        if not looks_like_person_name(
+            clean_line
+        ):
+            continue
 
-            upper_line = line.upper()
+        # Reject one-word OCR fragments
+        if len(clean_line.split()) < 2:
+            continue
 
-            if upper_line not in [
-                "PERMANENT ACCOUNT NUMBER",
-                "INCOME TAX DEPARTMENT",
-                "GOVT OF INDIA",
-                "GOVERNMENT OF INDIA"
-            ]:
-                return clean_ocr_value(line)
+        upper_line = clean_line.upper()
+
+        blocked_lines = [
+            "PERMANENT ACCOUNT NUMBER",
+            "INCOME TAX DEPARTMENT",
+            "GOVT OF INDIA",
+            "GOVERNMENT OF INDIA",
+            "INCOME TAX",
+            "PERMANENT ACCOUNT"
+        ]
+
+        if upper_line in blocked_lines:
+            continue
+
+        return clean_line
 
     return "Not detected"
 
@@ -416,11 +498,13 @@ def extract_text(document_image):
         if result is not None:
 
             if hasattr(result, "txts"):
+
                 texts = list(
                     result.txts or []
                 )
 
             if hasattr(result, "scores"):
+
                 scores = list(
                     result.scores or []
                 )
@@ -442,10 +526,14 @@ def extract_text(document_image):
 
         for text in texts:
 
-            text = clean_ocr_value(text)
+            text = clean_ocr_value(
+                text
+            )
 
             if text:
-                detected_text.append(text)
+                detected_text.append(
+                    text
+                )
 
         full_text = "\n".join(
             detected_text
@@ -455,6 +543,12 @@ def extract_text(document_image):
             full_text
         )
 
+        # --------------------------------------------------
+        # OCR CONFIDENCE
+        # --------------------------------------------------
+
+        confidence = 0.0
+
         if scores:
 
             valid_scores = []
@@ -462,10 +556,14 @@ def extract_text(document_image):
             for score in scores:
 
                 try:
+
                     value = float(score)
 
                     if 0 <= value <= 1:
-                        valid_scores.append(value)
+
+                        valid_scores.append(
+                            value
+                        )
 
                 except Exception:
                     pass
@@ -480,26 +578,39 @@ def extract_text(document_image):
                     2
                 )
 
-            else:
-                confidence = 0.0
-
-        else:
-            confidence = 0.0
+        # --------------------------------------------------
+        # DOCUMENT TYPE
+        # --------------------------------------------------
 
         document_type = detect_document_type(
             normalized_text
         )
+
+        # --------------------------------------------------
+        # PAN NUMBER
+        # --------------------------------------------------
 
         pan_number = extract_pan_number(
             normalized_text
         )
 
         if pan_number != "Not detected":
-            document_type = "PAN / Tax Identity Card"
+
+            document_type = (
+                "PAN / Tax Identity Card"
+            )
+
+        # --------------------------------------------------
+        # DATE OF BIRTH
+        # --------------------------------------------------
 
         date_of_birth = extract_date_of_birth(
             normalized_text
         )
+
+        # --------------------------------------------------
+        # NAME
+        # --------------------------------------------------
 
         lines = [
             clean_ocr_value(x)
@@ -511,9 +622,17 @@ def extract_text(document_image):
             lines
         )
 
+        # --------------------------------------------------
+        # ADDRESS
+        # --------------------------------------------------
+
         address = extract_address(
             normalized_text
         )
+
+        # --------------------------------------------------
+        # FINAL RESULT
+        # --------------------------------------------------
 
         return {
             "document_type": document_type,
