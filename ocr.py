@@ -50,8 +50,9 @@ def preprocess_image(image):
 
     height, width = image.shape[:2]
 
-    if width < 1600:
-        scale = 1600 / width
+    if width < 1800:
+        scale = 1800 / width
+
         image = cv2.resize(
             image,
             None,
@@ -75,20 +76,44 @@ def preprocess_image(image):
     return gray
 
 
-def detect_document_type(text):
-    text = text.lower()
+def clean_ocr_text(text):
+    text = str(text)
 
-    if any(x in text for x in [
+    replacements = {
+        "|": "I",
+        "—": "-",
+        "–": "-",
+        "’": "'",
+        "`": "",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    text = re.sub(r"[ \t]+", " ", text)
+
+    return text.strip()
+
+
+def detect_document_type(text):
+    text_lower = text.lower()
+
+    pan_keywords = [
         "permanent account number",
+        "permanent account",
         "income tax",
         "income-tax",
         "pan card",
+        "pan no",
+        "pan number",
         "tax department",
         "tax identity"
-    ]):
+    ]
+
+    if any(keyword in text_lower for keyword in pan_keywords):
         return "PAN / Tax Identity Card"
 
-    if any(x in text for x in [
+    if any(keyword in text_lower for keyword in [
         "passport",
         "passport no",
         "passport number",
@@ -96,7 +121,7 @@ def detect_document_type(text):
     ]):
         return "Passport"
 
-    if any(x in text for x in [
+    if any(keyword in text_lower for keyword in [
         "driver license",
         "driver's license",
         "driving license",
@@ -106,7 +131,7 @@ def detect_document_type(text):
     ]):
         return "Driver License"
 
-    if any(x in text for x in [
+    if any(keyword in text_lower for keyword in [
         "identity card",
         "identity document",
         "national id",
@@ -114,13 +139,13 @@ def detect_document_type(text):
     ]):
         return "Identity Document"
 
-    if any(x in text for x in [
+    if any(keyword in text_lower for keyword in [
         "birth certificate",
         "certificate of birth"
     ]):
         return "Birth Certificate"
 
-    if any(x in text for x in [
+    if any(keyword in text_lower for keyword in [
         "form w-4",
         "w-4",
         "withholding certificate"
@@ -140,7 +165,12 @@ def extract_field(text, patterns):
 
         if match:
             value = match.group(1).strip()
-            value = re.sub(r"\s+", " ", value)
+
+            value = re.sub(
+                r"\s+",
+                " ",
+                value
+            )
 
             if value:
                 return value
@@ -149,9 +179,99 @@ def extract_field(text, patterns):
 
 
 def extract_pan_number(text):
+    normalized = text.upper()
+
     patterns = [
-        r"(?:pan\s*(?:no|number)?|permanent\s*account\s*number)\s*[:\-]?\s*([A-Z]{5}[0-9]{4}[A-Z])",
-        r"\b([A-Z]{5}[0-9]{4}[A-Z])\b"
+        r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
+        r"(?:PAN|P\.?A\.?N\.?)\s*(?:NO|NUMBER|CARD)?\s*[:\-]?\s*([A-Z]{5}[0-9]{4}[A-Z])",
+        r"(?:PERMANENT\s+ACCOUNT\s+NUMBER)\s*[:\-]?\s*([A-Z]{5}[0-9]{4}[A-Z])"
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            normalized,
+            re.IGNORECASE
+        )
+
+        if match:
+            if match.lastindex:
+                return match.group(1).upper()
+
+            return match.group(0).upper()
+
+    return "Not detected"
+
+
+def normalize_name(value):
+    value = clean_ocr_text(value)
+
+    value = re.sub(
+        r"^(name|full name)\s*[:\-]?\s*",
+        "",
+        value,
+        flags=re.IGNORECASE
+    )
+
+    value = re.sub(
+        r"[^A-Za-z .'-]",
+        " ",
+        value
+    )
+
+    value = re.sub(
+        r"\s+",
+        " ",
+        value
+    )
+
+    value = value.strip()
+
+    words = value.split()
+
+    if not words:
+        return "Not detected"
+
+    if len(words) > 6:
+        words = words[:6]
+
+    return " ".join(words)
+
+
+def looks_like_name(value):
+    if not value or value == "Not detected":
+        return False
+
+    value = normalize_name(value)
+
+    words = value.split()
+
+    if len(words) < 1 or len(words) > 6:
+        return False
+
+    if any(char.isdigit() for char in value):
+        return False
+
+    letters = re.sub(
+        r"[^A-Za-z]",
+        "",
+        value
+    )
+
+    return len(letters) >= 3
+
+
+def extract_name(text):
+    patterns = [
+        r"(?:full\s*name)\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,70})",
+        r"(?:name)\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,70})",
+        r"(?:name)\s+([A-Za-z][A-Za-z .'-]{2,70})",
+        r"(?:given\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})",
+        r"(?:given\s*names?)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})",
+        r"(?:first\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})",
+        r"(?:surname)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})",
+        r"(?:last\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})",
+        r"(?:family\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,60})"
     ]
 
     for pattern in patterns:
@@ -162,43 +282,54 @@ def extract_pan_number(text):
         )
 
         if match:
-            return match.group(1).upper()
+            candidate = normalize_name(
+                match.group(1)
+            )
+
+            if looks_like_name(candidate):
+                return candidate
 
     return "Not detected"
 
 
-def extract_name(text):
-    patterns = [
-        r"(?:full\s*name)\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,60})",
-        r"(?:name)\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,60})",
-        r"(?:given\s*name|given\s*names|first\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,50})",
-        r"(?:surname|last\s*name|family\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{1,40})"
-    ]
-
-    return extract_field(
-        text,
-        patterns
-    )
-
-
 def extract_parent_name(text):
     patterns = [
-        r"(?:father'?s?\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{2,60})",
-        r"(?:father)\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,60})",
-        r"(?:parent'?s?\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{2,60})"
+        r"(?:father'?s?\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{2,70})",
+        r"(?:father)\s*[:\-]\s*([A-Za-z][A-Za-z .'-]{2,70})",
+        r"(?:parent'?s?\s*name)\s*[:\-]?\s*([A-Za-z][A-Za-z .'-]{2,70})"
     ]
 
-    return extract_field(
-        text,
-        patterns
-    )
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
+
+        if match:
+            candidate = normalize_name(
+                match.group(1)
+            )
+
+            if looks_like_name(candidate):
+                return candidate
+
+    return "Not detected"
 
 
 def extract_date_of_birth(text):
     patterns = [
-        r"(?:date\s*of\s*birth|dob|birth\s*date)\s*[:\-]?\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})",
-        r"(?:date\s*of\s*birth|dob|birth\s*date)\s*[:\-]?\s*(\d{1,2}\s+[A-Za-z]+\s+\d{2,4})",
-        r"(?:date\s*of\s*birth|dob|birth\s*date)\s*[:\-]?\s*([A-Za-z]+\s+\d{1,2},?\s+\d{2,4})"
+        r"(?:date\s*of\s*birth|dob|birth\s*date)"
+        r"\s*[:\-]?\s*"
+        r"(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})",
+
+        r"(?:date\s*of\s*birth|dob|birth\s*date)"
+        r"\s*[:\-]?\s*"
+        r"(\d{1,2}\s+[A-Za-z]+\s+\d{2,4})",
+
+        r"(?:date\s*of\s*birth|dob|birth\s*date)"
+        r"\s*[:\-]?\s*"
+        r"([A-Za-z]+\s+\d{1,2},?\s+\d{2,4})"
     ]
 
     return extract_field(
@@ -207,12 +338,43 @@ def extract_date_of_birth(text):
     )
 
 
+def extract_date_fallback(text):
+    patterns = [
+        r"\b\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}\b",
+        r"\b\d{1,2}\s+[A-Za-z]{3,9}\s+\d{2,4}\b",
+        r"\b[A-Za-z]{3,9}\s+\d{1,2},?\s+\d{2,4}\b"
+    ]
+
+    for pattern in patterns:
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
+
+        if match:
+            return match.group(0).strip()
+
+    return "Not detected"
+
+
 def extract_document_number(text):
     patterns = [
-        r"(?:document\s*(?:no|number))\s*[:\-]?\s*([A-Z0-9\-]{4,30})",
-        r"(?:id\s*(?:no|number))\s*[:\-]?\s*([A-Z0-9\-]{4,30})",
-        r"(?:passport\s*(?:no|number))\s*[:\-]?\s*([A-Z0-9\-]{4,30})",
-        r"(?:license|licence)\s*(?:no|number)\s*[:\-]?\s*([A-Z0-9\-]{4,30})"
+        r"(?:document\s*(?:no|number))"
+        r"\s*[:\-]?\s*"
+        r"([A-Z0-9\-]{4,30})",
+
+        r"(?:id\s*(?:no|number))"
+        r"\s*[:\-]?\s*"
+        r"([A-Z0-9\-]{4,30})",
+
+        r"(?:passport\s*(?:no|number))"
+        r"\s*[:\-]?\s*"
+        r"([A-Z0-9\-]{4,30})",
+
+        r"(?:license|licence)\s*(?:no|number)"
+        r"\s*[:\-]?\s*"
+        r"([A-Z0-9\-]{4,30})"
     ]
 
     result = extract_field(
@@ -228,14 +390,34 @@ def extract_document_number(text):
 
 def extract_address(text):
     patterns = [
-        r"(?:address|residential\s+address)\s*[:\-]\s*(.+)",
-        r"(?:permanent\s+address)\s*[:\-]\s*(.+)"
+        r"(?:address|residential\s+address)"
+        r"\s*[:\-]\s*(.+)",
+
+        r"(?:permanent\s+address)"
+        r"\s*[:\-]\s*(.+)"
     ]
 
     return extract_field(
         text,
         patterns
     )
+
+
+def build_combined_text(results):
+    lines = []
+
+    for result in results:
+        if len(result) < 3:
+            continue
+
+        text = clean_ocr_text(
+            result[1]
+        )
+
+        if text:
+            lines.append(text)
+
+    return lines
 
 
 def extract_text(document_image):
@@ -249,7 +431,12 @@ def extract_text(document_image):
         results = reader.readtext(
             processed_image,
             detail=1,
-            paragraph=False
+            paragraph=False,
+            contrast_ths=0.05,
+            adjust_contrast=0.7,
+            text_threshold=0.5,
+            low_text=0.2,
+            link_threshold=0.3
         )
 
         detected_text = []
@@ -259,9 +446,9 @@ def extract_text(document_image):
             if len(result) < 3:
                 continue
 
-            text = str(
+            text = clean_ocr_text(
                 result[1]
-            ).strip()
+            )
 
             confidence = float(
                 result[2]
@@ -275,17 +462,6 @@ def extract_text(document_image):
             detected_text
         )
 
-        if confidences:
-            confidence = round(
-                (
-                    sum(confidences)
-                    / len(confidences)
-                ) * 100,
-                2
-            )
-        else:
-            confidence = 0.0
-
         normalized_text = re.sub(
             r"[ \t]+",
             " ",
@@ -295,6 +471,16 @@ def extract_text(document_image):
         document_type = detect_document_type(
             normalized_text
         )
+
+        pan_number = extract_pan_number(
+            normalized_text
+        )
+
+        if (
+            pan_number != "Not detected"
+            and document_type == "Unknown Document"
+        ):
+            document_type = "PAN / Tax Identity Card"
 
         name = extract_name(
             normalized_text
@@ -308,6 +494,11 @@ def extract_text(document_image):
             normalized_text
         )
 
+        if date_of_birth == "Not detected":
+            date_of_birth = extract_date_fallback(
+                normalized_text
+            )
+
         document_number = extract_document_number(
             normalized_text
         )
@@ -316,15 +507,16 @@ def extract_text(document_image):
             normalized_text
         )
 
-        pan_number = extract_pan_number(
-            normalized_text
-        )
-
-        if (
-            pan_number != "Not detected"
-            and document_type == "Unknown Document"
-        ):
-            document_type = "PAN / Tax Identity Card"
+        if confidences:
+            confidence = round(
+                (
+                    sum(confidences)
+                    / len(confidences)
+                ) * 100,
+                2
+            )
+        else:
+            confidence = 0.0
 
         return {
             "document_type": document_type,
