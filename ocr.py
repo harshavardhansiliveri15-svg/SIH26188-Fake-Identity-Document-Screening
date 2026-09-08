@@ -33,15 +33,12 @@ def convert_to_bgr(image):
     if not isinstance(image, np.ndarray):
         raise ValueError("Unsupported image format")
 
-    # Grayscale
     if image.ndim == 2:
         return cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
 
-    # RGBA
     if image.ndim == 3 and image.shape[2] == 4:
         return cv2.cvtColor(image, cv2.COLOR_RGBA2BGR)
 
-    # RGB
     if image.ndim == 3 and image.shape[2] == 3:
         return cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
@@ -58,8 +55,8 @@ def preprocess_image(image):
 
     height, width = image.shape[:2]
 
-    # Don't unnecessarily enlarge already-large images
     if width < 1600:
+
         scale = 1600 / width
 
         image = cv2.resize(
@@ -70,14 +67,17 @@ def preprocess_image(image):
             interpolation=cv2.INTER_CUBIC
         )
 
-    # Mild sharpening
     kernel = np.array([
         [0, -1, 0],
         [-1, 5, -1],
         [0, -1, 0]
     ])
 
-    sharpened = cv2.filter2D(image, -1, kernel)
+    sharpened = cv2.filter2D(
+        image,
+        -1,
+        kernel
+    )
 
     return sharpened
 
@@ -93,7 +93,11 @@ def normalize_text(text):
 
     text = str(text)
 
-    text = re.sub(r"\s+", " ", text)
+    text = re.sub(
+        r"\s+",
+        " ",
+        text
+    )
 
     return text.strip()
 
@@ -106,7 +110,7 @@ def clean_lines(lines):
 
         line = normalize_text(line)
 
-        if line and len(line) >= 1:
+        if line:
             cleaned.append(line)
 
     return cleaned
@@ -123,7 +127,10 @@ def detect_document_type(text):
     if (
         "INCOME TAX DEPARTMENT" in t
         or "PERMANENT ACCOUNT NUMBER" in t
-        or re.search(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b", t)
+        or re.search(
+            r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
+            t
+        )
     ):
         return "PAN Card"
 
@@ -173,6 +180,7 @@ def extract_document_number(text, document_type):
     )
 
     if aadhaar:
+
         return re.sub(
             r"\s+",
             " ",
@@ -183,23 +191,134 @@ def extract_document_number(text, document_type):
 
 
 # =========================================================
-# DATE
+# DATE VALIDATION
 # =========================================================
 
-def extract_date(text):
+def is_valid_date(date_string):
+
+    if not date_string:
+        return False
+
+    date_string = date_string.strip()
 
     patterns = [
-        r"\b\d{2}[/-]\d{2}[/-]\d{4}\b",
-        r"\b\d{4}[/-]\d{2}[/-]\d{2}\b",
-        r"\b\d{2}[/-]\d{2}[/-]\d{2}\b"
+        r"^\d{2}[/-]\d{2}[/-]\d{4}$",
+        r"^\d{4}[/-]\d{2}[/-]\d{2}$",
+        r"^\d{2}[/-]\d{2}[/-]\d{2}$"
     ]
 
-    for pattern in patterns:
+    return any(
+        re.match(pattern, date_string)
+        for pattern in patterns
+    )
 
-        match = re.search(pattern, text)
+
+# =========================================================
+# DOB EXTRACTION
+# =========================================================
+
+def extract_date(text, lines=None):
+
+    # -----------------------------------------------------
+    # First: search specifically for DOB labels
+    # -----------------------------------------------------
+
+    dob_patterns = [
+
+        # DOB: 18/05/1990
+        r"(?:DATE\s*OF\s*BIRTH|DOB|D\.O\.B\.?)"
+        r"\s*[:\-]?\s*"
+        r"(\d{2}[/-]\d{2}[/-]\d{4})",
+
+        # DATE OF BIRTH 18-05-1990
+        r"(?:DATE\s*OF\s*BIRTH|DOB|D\.O\.B\.?)"
+        r"\s+"
+        r"(\d{2}[/-]\d{2}[/-]\d{4})",
+
+        # DOB: 1990/05/18
+        r"(?:DATE\s*OF\s*BIRTH|DOB|D\.O\.B\.?)"
+        r"\s*[:\-]?\s*"
+        r"(\d{4}[/-]\d{2}[/-]\d{2})"
+    ]
+
+    upper_text = text.upper()
+
+    for pattern in dob_patterns:
+
+        match = re.search(
+            pattern,
+            upper_text
+        )
 
         if match:
-            return match.group(0)
+
+            candidate = match.group(1)
+
+            if is_valid_date(candidate):
+                return candidate
+
+
+    # -----------------------------------------------------
+    # Second: check individual OCR lines
+    # -----------------------------------------------------
+
+    if lines:
+
+        for i, line in enumerate(lines):
+
+            upper_line = line.upper()
+
+            if (
+                "DATE OF BIRTH" in upper_line
+                or "DOB" in upper_line
+                or "D.O.B" in upper_line
+            ):
+
+                # Date on same line
+                match = re.search(
+                    r"\d{2}[/-]\d{2}[/-]\d{4}",
+                    line
+                )
+
+                if match:
+                    return match.group(0)
+
+                # Date on next OCR line
+                if i + 1 < len(lines):
+
+                    match = re.search(
+                        r"\d{2}[/-]\d{2}[/-]\d{4}",
+                        lines[i + 1]
+                    )
+
+                    if match:
+                        return match.group(0)
+
+
+    # -----------------------------------------------------
+    # Final fallback
+    #
+    # Only used if no DOB label was detected.
+    # -----------------------------------------------------
+
+    date_patterns = [
+        r"\b\d{2}[/-]\d{2}[/-]\d{4}\b",
+        r"\b\d{4}[/-]\d{2}[/-]\d{2}\b"
+    ]
+
+    for pattern in date_patterns:
+
+        match = re.search(
+            pattern,
+            text
+        )
+
+        if match:
+
+            candidate = match.group(0)
+
+            if is_valid_date(candidate):
+                return candidate
 
     return ""
 
@@ -219,11 +338,11 @@ def extract_name(lines):
 
     for i, line in enumerate(lines):
 
-        upper = line.upper()
+        upper = line.upper().strip()
 
         for keyword in keywords:
 
-            if keyword in upper:
+            if upper.startswith(keyword):
 
                 # NAME: ABC
                 parts = re.split(
@@ -234,7 +353,9 @@ def extract_name(lines):
 
                 if len(parts) == 2:
 
-                    candidate = parts[1].strip()
+                    candidate = normalize_text(
+                        parts[1]
+                    )
 
                     if candidate:
                         return candidate
@@ -243,7 +364,9 @@ def extract_name(lines):
                 # ABC
                 if i + 1 < len(lines):
 
-                    candidate = lines[i + 1].strip()
+                    candidate = normalize_text(
+                        lines[i + 1]
+                    )
 
                     if candidate:
                         return candidate
@@ -257,13 +380,23 @@ def extract_name(lines):
 
 def extract_address(lines):
 
-    address = []
+    address_lines = []
 
     collecting = False
 
+    stop_keywords = [
+        "DATE OF BIRTH",
+        "DOB",
+        "GENDER",
+        "SEX",
+        "SIGNATURE",
+        "PAN",
+        "PERMANENT ACCOUNT NUMBER"
+    ]
+
     for line in lines:
 
-        upper = line.upper()
+        upper = line.upper().strip()
 
         if "ADDRESS" in upper:
 
@@ -276,34 +409,36 @@ def extract_address(lines):
             )
 
             if len(parts) == 2:
-                value = parts[1].strip()
+
+                value = normalize_text(
+                    parts[1]
+                )
 
                 if value:
-                    address.append(value)
+                    address_lines.append(value)
 
             continue
 
         if collecting:
 
-            # Stop at another obvious field
             if any(
-                key in upper
-                for key in [
-                    "DATE OF BIRTH",
-                    "DOB",
-                    "GENDER",
-                    "SEX",
-                    "NAME:"
-                ]
+                keyword in upper
+                for keyword in stop_keywords
             ):
                 break
 
-            if len(address) < 5:
-                address.append(line)
-            else:
+            if line.strip():
+
+                address_lines.append(
+                    normalize_text(line)
+                )
+
+            if len(address_lines) >= 5:
                 break
 
-    return ", ".join(clean_lines(address))
+    return ", ".join(
+        clean_lines(address_lines)
+    )
 
 
 # =========================================================
@@ -315,9 +450,23 @@ def parse_ocr_result(result):
     if result is None:
         return [], [], []
 
-    texts = getattr(result, "txts", None)
-    scores = getattr(result, "scores", None)
-    boxes = getattr(result, "boxes", None)
+    texts = getattr(
+        result,
+        "txts",
+        None
+    )
+
+    scores = getattr(
+        result,
+        "scores",
+        None
+    )
+
+    boxes = getattr(
+        result,
+        "boxes",
+        None
+    )
 
     if texts is None:
         texts = []
@@ -343,37 +492,47 @@ def extract_text(image):
 
     try:
 
-        # ---------------------------------------------
+        # -------------------------------------------------
         # PREPROCESS
-        # ---------------------------------------------
+        # -------------------------------------------------
 
-        processed_image = preprocess_image(image)
+        processed_image = preprocess_image(
+            image
+        )
 
-        # ---------------------------------------------
+        # -------------------------------------------------
         # OCR
-        # ---------------------------------------------
+        # -------------------------------------------------
 
         engine = get_ocr_engine()
 
-        result = engine(processed_image)
+        result = engine(
+            processed_image
+        )
 
-        # ---------------------------------------------
-        # PARSE RESULT
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # PARSE
+        # -------------------------------------------------
 
-        texts, scores, boxes = parse_ocr_result(result)
+        texts, scores, boxes = parse_ocr_result(
+            result
+        )
 
-        # ---------------------------------------------
-        # CLEAN TEXT
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # CLEAN
+        # -------------------------------------------------
 
-        lines = clean_lines(texts)
+        lines = clean_lines(
+            texts
+        )
 
-        raw_text = "\n".join(lines)
+        raw_text = "\n".join(
+            lines
+        )
 
-        # ---------------------------------------------
+        # -------------------------------------------------
         # CONFIDENCE
-        # ---------------------------------------------
+        # -------------------------------------------------
 
         valid_scores = []
 
@@ -384,10 +543,16 @@ def extract_text(image):
                 score = float(score)
 
                 if 0 <= score <= 1:
-                    valid_scores.append(score)
+
+                    valid_scores.append(
+                        score
+                    )
 
                 elif 1 < score <= 100:
-                    valid_scores.append(score / 100)
+
+                    valid_scores.append(
+                        score / 100
+                    )
 
             except Exception:
                 pass
@@ -395,8 +560,8 @@ def extract_text(image):
         if valid_scores:
 
             confidence = round(
-                sum(valid_scores) /
-                len(valid_scores),
+                sum(valid_scores)
+                / len(valid_scores),
                 3
             )
 
@@ -404,17 +569,17 @@ def extract_text(image):
 
             confidence = 0.0
 
-        # ---------------------------------------------
+        # -------------------------------------------------
         # DOCUMENT TYPE
-        # ---------------------------------------------
+        # -------------------------------------------------
 
         document_type = detect_document_type(
             raw_text
         )
 
-        # ---------------------------------------------
+        # -------------------------------------------------
         # FIELDS
-        # ---------------------------------------------
+        # -------------------------------------------------
 
         document_number = extract_document_number(
             raw_text,
@@ -422,7 +587,8 @@ def extract_text(image):
         )
 
         date_of_birth = extract_date(
-            raw_text
+            raw_text,
+            lines
         )
 
         name = extract_name(
@@ -433,9 +599,9 @@ def extract_text(image):
             lines
         )
 
-        # ---------------------------------------------
-        # RETURN
-        # ---------------------------------------------
+        # -------------------------------------------------
+        # RESULT
+        # -------------------------------------------------
 
         return {
             "document_type": document_type,
