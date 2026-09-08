@@ -327,18 +327,22 @@ def extract_date(text, lines=None):
 # NAME
 # =========================================================
 
-def extract_name(lines):
+```python
+def extract_name(lines, document_type=""):
 
-    # First try explicit NAME labels
+    # =====================================================
+    # 1. FIRST: EXPLICIT NAME LABEL
+    # =====================================================
+
     for i, line in enumerate(lines):
 
         text = normalize_text(line)
         upper = text.upper()
 
-        # NAME: HARSHAVARDHAN
+        # NAME: ABC
         match = re.match(
-            r"^(?:NAME|FULL\s*NAME|GIVEN\s*NAME|SURNAME)"
-            r"\s*[:\-]?\s*(.*)$",
+            r"^(?:NAME|FULL\s*NAME|GIVEN\s*NAME)"
+            r"\s*[:\-]\s*(.+)$",
             text,
             re.IGNORECASE
         )
@@ -347,34 +351,29 @@ def extract_name(lines):
 
             candidate = normalize_text(match.group(1))
 
-            if candidate and candidate.upper() not in [
-                "NAME",
-                "FULL NAME",
-                "GIVEN NAME",
-                "SURNAME"
-            ]:
+            candidate = re.sub(
+                r"[^A-Za-z .]",
+                " ",
+                candidate
+            )
 
-                # Remove unwanted characters
-                candidate = re.sub(
-                    r"[^A-Za-z .]",
-                    " ",
-                    candidate
-                )
+            candidate = normalize_text(candidate)
 
-                candidate = normalize_text(candidate)
+            if len(candidate) >= 3:
+                return candidate
 
-                if len(candidate) >= 3:
-                    return candidate
-
-        # NAME on one line, actual name on next line
+        # NAME
+        # ABC
         if re.fullmatch(
-            r"(?:NAME|FULL\s*NAME|GIVEN\s*NAME|SURNAME)",
+            r"(?:NAME|FULL\s*NAME|GIVEN\s*NAME)",
             upper
         ):
 
             if i + 1 < len(lines):
 
-                candidate = normalize_text(lines[i + 1])
+                candidate = normalize_text(
+                    lines[i + 1]
+                )
 
                 candidate = re.sub(
                     r"[^A-Za-z .]",
@@ -388,12 +387,158 @@ def extract_name(lines):
                     return candidate
 
 
-    # -----------------------------------------------------
-    # PAN fallback
+    # =====================================================
+    # 2. PAN CARD POSITION-BASED EXTRACTION
+    # =====================================================
+
+    # Find DOB position
+    dob_index = -1
+
+    for i, line in enumerate(lines):
+
+        upper = line.upper()
+
+        if (
+            "DATE OF BIRTH" in upper
+            or "DOB" in upper
+            or "D.O.B" in upper
+        ):
+            dob_index = i
+            break
+
+
+    # Find PAN number position
+    pan_index = -1
+
+    for i, line in enumerate(lines):
+
+        if re.search(
+            r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
+            line.upper()
+        ):
+            pan_index = i
+            break
+
+
+    # =====================================================
+    # 3. SEARCH BEFORE DOB
     #
-    # If OCR does not recognize the NAME label,
-    # search for a likely person's name.
-    # -----------------------------------------------------
+    # Typical PAN OCR order is approximately:
+    #
+    # GOVERNMENT OF INDIA
+    # NAME
+    # FATHER NAME
+    # DATE OF BIRTH
+    # PAN NUMBER
+    #
+    # Therefore look immediately before DOB.
+    # =====================================================
+
+    if dob_index > 0:
+
+        possible = []
+
+        start = max(
+            0,
+            dob_index - 5
+        )
+
+        for i in range(
+            start,
+            dob_index
+        ):
+
+            candidate = normalize_text(
+                lines[i]
+            )
+
+            upper = candidate.upper()
+
+            if not candidate:
+                continue
+
+            # Skip obvious document text
+            blocked = [
+                "INCOME TAX",
+                "DEPARTMENT",
+                "GOVERNMENT",
+                "INDIA",
+                "PERMANENT",
+                "ACCOUNT",
+                "NUMBER",
+                "PAN",
+                "FATHER",
+                "FATHER'S",
+                "FATHER NAME",
+                "MOTHER",
+                "ADDRESS",
+                "SIGNATURE"
+            ]
+
+            if any(
+                word in upper
+                for word in blocked
+            ):
+                continue
+
+            # Skip PAN
+            if re.search(
+                r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
+                upper
+            ):
+                continue
+
+            # Skip dates
+            if re.search(
+                r"\d{2}[/-]\d{2}[/-]\d{4}",
+                candidate
+            ):
+                continue
+
+            # Name must contain letters
+            if not re.search(
+                r"[A-Za-z]",
+                candidate
+            ):
+                continue
+
+            # Remove OCR garbage
+            candidate = re.sub(
+                r"[^A-Za-z .]",
+                " ",
+                candidate
+            )
+
+            candidate = normalize_text(candidate)
+
+            if len(candidate) < 3:
+                continue
+
+            if len(candidate) > 40:
+                continue
+
+            possible.append(
+                (i, candidate)
+            )
+
+
+        # Prefer the candidate that is closest to DOB,
+        # but avoid a likely father's-name line.
+        if possible:
+
+            # If there are at least two candidates,
+            # the earlier one is usually the person's name
+            # and the later one is often father's name.
+            if len(possible) >= 2:
+
+                return possible[-2][1]
+
+            return possible[-1][1]
+
+
+    # =====================================================
+    # 4. FINAL SAFE FALLBACK
+    # =====================================================
 
     blocked = [
         "INCOME",
@@ -413,68 +558,47 @@ def extract_name(lines):
         "FATHER",
         "MOTHER",
         "MALE",
-        "FEMALE"
+        "FEMALE",
+        "HOT"
     ]
 
-    candidates = []
-
-    for index, line in enumerate(lines):
+    for line in lines:
 
         candidate = normalize_text(line)
-
-        if not candidate:
-            continue
-
         upper = candidate.upper()
 
-        # Skip known document information
-        if any(word in upper for word in blocked):
+        if any(
+            word in upper
+            for word in blocked
+        ):
             continue
 
-        # Skip PAN number
         if re.search(
             r"\b[A-Z]{5}[0-9]{4}[A-Z]\b",
             upper
         ):
             continue
 
-        # Skip dates
         if re.search(
-            r"\b\d{2}[/-]\d{2}[/-]\d{4}\b",
+            r"\d{2}[/-]\d{2}[/-]\d{4}",
             candidate
         ):
             continue
 
-        # Name should contain letters
-        letters = re.findall(
-            r"[A-Za-z]",
+        candidate = re.sub(
+            r"[^A-Za-z .]",
+            " ",
             candidate
         )
 
-        if len(letters) < 3:
-            continue
+        candidate = normalize_text(candidate)
 
-        # Avoid long address-like text
-        if len(candidate) > 45:
-            continue
-
-        # Must mostly contain letters/spaces
-        if not re.fullmatch(
-            r"[A-Za-z .]+",
-            candidate
-        ):
-            continue
-
-        candidates.append(
-            (index, candidate)
-        )
-
-
-    # Return the first plausible name
-    if candidates:
-        return candidates[0][1]
+        if len(candidate) >= 3:
+            return candidate
 
     return ""
+```
+
 
 
 # =========================================================
